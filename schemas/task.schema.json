@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ai-electricity.internal/schemas/task.schema.json",
+  "title": "Agent Task",
+  "description": "A unit of work handed to an agent via the shared bus (issue body, comment payload, or workflow_dispatch input).",
+  "type": "object",
+  "required": ["id", "type", "targetAgent", "source", "createdAt", "payload"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Stable idempotency key, e.g. `issue-123` or `pr-45-review`."
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "feature-request",
+        "bug-report",
+        "review-request",
+        "test-request",
+        "fix-request",
+        "advisory-request",
+        "release-request"
+      ]
+    },
+    "targetAgent": {
+      "type": "string",
+      "enum": [
+        "codegen-agent",
+        "review-agent",
+        "advisory-agent",
+        "error-resolution-agent",
+        "vcs-agent",
+        "testing-agent"
+      ]
+    },
+    "source": {
+      "type": "object",
+      "required": ["kind", "ref"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "type": "string", "enum": ["issue", "pull_request", "workflow_run", "tag", "manual"] },
+        "ref": { "type": "string", "description": "e.g. issue number, PR number, tag name" }
+      }
+    },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "payload": {
+      "type": "object",
+      "description": "Type-specific data (spec text, stack trace, coverage report path, etc.). Must not contain secrets/credentials."
+    },
+    "priorAttempts": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0,
+      "description": "Used to bound retries before escalation."
+    }
+  }
+}

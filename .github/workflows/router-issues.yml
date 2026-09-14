@@ -1,0 +1,34 @@
+name: Router — Issues (Orchestrator)
+
+# Pure routing: labels an issue for the correct agent based on its type, per agents/orchestrator.yaml.
+# No agent logic lives here — this only maintains task-board state.
+
+on:
+  issues:
+    types: [opened, edited, labeled]
+
+permissions:
+  issues: write
+
+jobs:
+  route:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Route feature/bug issues to Code Generation Agent
+        if: contains(github.event.issue.labels.*.name, 'type:feature') || contains(github.event.issue.labels.*.name, 'type:bug')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: ['agent:codegen']
+            });
+
+      - name: Route advisory pain-points to Advisory Agent
+        if: contains(github.event.issue.labels.*.name, 'agent:advisory')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.notice('Issue routed to advisory-agent per orchestrator.yaml');

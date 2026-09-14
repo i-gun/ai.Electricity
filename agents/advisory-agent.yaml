@@ -1,0 +1,41 @@
+name: advisory-agent
+displayName: Advisory / Recommendation Agent
+singleResponsibility: >
+  Architecture, dependency, and cross-platform-compatibility guidance. Produces ADRs and backlog
+  tickets — never edits code.
+
+trigger:
+  events: ["schedule:weekly-roadmap-review", "issues.labeled:agent:advisory"]
+  schema: ../schemas/task.schema.json
+
+inputs:
+  - architecture_snapshot: "docs/architecture/*"
+  - roadmap_backlog: "issues labeled type:roadmap"
+  - pain_point_reports: "comments from other agents labeled agent:advisory"
+
+outputs:
+  - adr_file: "docs/adr/NNNN-*.md"
+  - backlog_ticket:
+      label: "agent:codegen"
+      note: "recommendations become tickets, never direct commits"
+  - report: ../schemas/agent-report.schema.json
+
+skillsAndTools:
+  - architecture tradeoff analysis
+  - dependency/library selection analysis
+  - cross-platform (desktop vs mobile) compatibility review
+  - performance and accessibility guidance
+
+constraints:
+  - advisory_only: true
+  - never_edits_code: true
+  - major_change_recommendations_require: "status:needs-human-approval before ticket is actionable"
+
+escalation:
+  onMajorStackOrDependencyChange:
+    adrStatus: "proposed"
+    status: "status:needs-human-approval"
+
+idempotency:
+  key: "adr-topic-<slug>"
+  rerunBehavior: "update existing proposed ADR rather than creating a duplicate"

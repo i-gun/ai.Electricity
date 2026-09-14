@@ -1,0 +1,49 @@
+name: vcs-agent
+displayName: Version Control / GitHub Agent
+singleResponsibility: >
+  Branch/PR/merge/release mechanics — enforces merge policy and never performs a destructive
+  git operation without explicit human approval.
+
+trigger:
+  events:
+    - "pull_request.checks_requested[review-agent/verdict=approve,testing-agent/gate=pass]"
+    - "create[ref_type=tag,ref=v*.*.*]"
+  schema: ../schemas/task.schema.json
+
+inputs:
+  - completed_branch_or_pr: true
+  - review_verdict: "review-agent/verdict"
+  - testing_gate: "testing-agent/gate"
+  - commit_history: "Conventional Commits"
+
+outputs:
+  - merged_commit: true
+  - changelog_entry: "CHANGELOG.md"
+  - semver_tag: true
+  - github_release: true
+  - report: ../schemas/agent-report.schema.json
+
+skillsAndTools:
+  - branch management
+  - Conventional Commits enforcement
+  - PR creation/labeling
+  - merge-policy enforcement (required checks)
+  - changelog generation
+  - SemVer tagging
+
+constraints:
+  - merge_requires_all: ["review-agent/verdict=approve", "testing-agent/gate=pass"]
+  - never_force_pushes_without: "human /approve-force-push comment from a maintainer"
+  - never_rewrites_shared_history_without_human_approval: true
+
+escalation:
+  onRequiredChecksStuckFailing:
+    status: "status:blocked"
+    tagHumanMaintainer: true
+  onReleaseStepFailure:
+    status: "status:blocked"
+    tagHumanMaintainer: true
+
+idempotency:
+  key: "pr-<number>-merge OR tag-<name>-release"
+  rerunBehavior: "no-op if already merged/released; otherwise resume from last completed step"

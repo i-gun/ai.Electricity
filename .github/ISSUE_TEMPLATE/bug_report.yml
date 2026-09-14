@@ -1,0 +1,19 @@
+name: Bug Report
+description: Handed to the Code Generation Agent for triage, or /fix invokes Error Resolution Agent directly.
+labels: ["type:bug"]
+body:
+  - type: textarea
+    id: repro
+    attributes:
+      label: Repro steps / stack trace
+      description: Include logs or a failing test id if known.
+    validations:
+      required: true
+  - type: dropdown
+    id: platforms
+    attributes:
+      label: Affected platforms
+      multiple: true
+      options: ["windows", "macos", "linux", "android", "ios"]
+    validations:
+      required: true

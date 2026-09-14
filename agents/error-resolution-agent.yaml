@@ -1,0 +1,53 @@
+name: error-resolution-agent
+displayName: Error Resolution Agent
+singleResponsibility: >
+  Triage and fix build/runtime/test failures, reactively (CI failure events) or on-demand
+  (developer/agent request), with minimal-diff patches.
+
+trigger:
+  events:
+    - "workflow_run.completed[conclusion=failure,name=ci-build-test]"
+    - "issue_comment:/fix"
+  schema: ../schemas/task.schema.json
+
+modes:
+  reactive:
+    description: "Subscribes to CI/build/test failure events."
+  onDemand:
+    description: "Invoked directly by a developer or another agent with repro steps."
+
+inputs:
+  - failing_stack_trace_or_log: "CI artifact"
+  - failing_test_id: optional
+  - repro_steps: optional
+
+outputs:
+  - fix_commit:
+      target: "same PR branch, or new fix/<slug> branch for standalone bugs"
+  - explanation_comment: true
+  - escalation_issue:
+      when: "root cause ambiguous"
+      label: "status:root-cause-unclear"
+  - report: ../schemas/agent-report.schema.json
+
+skillsAndTools:
+  - CI log triage
+  - root-cause analysis
+  - minimal-diff patching
+  - local repro runner
+
+constraints:
+  - never_force_pushes: true
+  - never_rewrites_shared_history: true
+  - fix_must_pass: ["lint", "build", "existing tests"]
+
+escalation:
+  onAmbiguousRootCause:
+    label: "agent:advisory"
+    status: "status:root-cause-unclear"
+  onArchitecturalChangeRequired:
+    label: "agent:advisory"
+
+idempotency:
+  key: "run-<workflow_run_id>" 
+  rerunBehavior: "update existing fix commit/comment rather than opening a second PR for the same failure"

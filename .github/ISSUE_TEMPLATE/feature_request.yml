@@ -1,0 +1,19 @@
+name: Feature Request
+description: Handed to the Code Generation Agent (label agent:codegen).
+labels: ["type:feature"]
+body:
+  - type: textarea
+    id: spec
+    attributes:
+      label: Feature spec
+      description: What should be built? Include acceptance criteria — this is the Code Generation Agent's only input besides the codebase.
+    validations:
+      required: true
+  - type: dropdown
+    id: platforms
+    attributes:
+      label: Target platforms
+      multiple: true
+      options: ["desktop", "mobile", "both"]
+    validations:
+      required: true

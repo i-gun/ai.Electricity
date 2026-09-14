@@ -1,0 +1,35 @@
+name: Router — Pull Requests (Orchestrator)
+
+# Fans out a ready-for-review PR to Code Review Agent and Testing Agent in parallel.
+# Neither agent calls the other directly — each posts its own required check independently.
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+permissions:
+  pull-requests: write
+  checks: write
+
+jobs:
+  route-review-agent:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify review-agent workflow
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.notice('pull_request#' + context.payload.pull_request.number + ' routed to review-agent');
+      # Actual review-agent implementation is invoked here (external agent runtime / reusable workflow).
+
+  route-testing-agent:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify testing-agent workflow
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.notice('pull_request#' + context.payload.pull_request.number + ' routed to testing-agent');
+      # Actual testing-agent implementation triggers ci-build-test.yml's matrix and posts testing-agent/gate.

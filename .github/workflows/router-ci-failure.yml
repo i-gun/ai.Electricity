@@ -1,0 +1,26 @@
+name: Router — CI Failure (Orchestrator)
+
+# On ci-build-test failure, routes to Error Resolution Agent (reactive mode) per agents/orchestrator.yaml.
+
+on:
+  workflow_run:
+    workflows: ["ci-build-test"]
+    types: [completed]
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  route-error-resolution:
+    if: github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Label associated PR/issue for error-resolution-agent
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runId = context.payload.workflow_run.id;
+            core.notice(`ci-build-test failed for run ${runId}; routing to error-resolution-agent`);
+            // Actual implementation: find associated PR via workflow_run.pull_requests,
+            // add label 'agent:error-resolution', attach failure logs for triage.

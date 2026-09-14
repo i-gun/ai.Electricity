@@ -1,0 +1,45 @@
+name: review-agent
+displayName: Code Review Agent
+singleResponsibility: >
+  Read-only review of a PR diff: enforce style/conventions, run security review (OWASP Top 10),
+  and produce an approve/request-changes verdict as a required check.
+
+trigger:
+  events: ["pull_request.opened", "pull_request.synchronize"]
+  condition: "pull_request.draft == false"
+  schema: ../schemas/task.schema.json
+
+inputs:
+  - pr_diff: true
+  - style_guide: "docs/conventions.md"
+  - prior_review_comments: "same PR, for idempotent re-review"
+  - owasp_top10_checklist: "docs/security/owasp-checklist.md"
+
+outputs:
+  - review_comment:
+      format: ../schemas/agent-report.schema.json
+      sections: ["blocking", "suggestions"]
+  - required_check: "review-agent/verdict"
+  - report: ../schemas/agent-report.schema.json
+
+skillsAndTools:
+  - static analysis
+  - style/convention linting
+  - OWASP Top 10 security review
+  - diff-level reasoning
+  - suggested-edit comments (GitHub suggestion blocks)
+
+constraints:
+  - access: read-only
+  - never_commits_directly: true
+  - may_only_affect_repo_via: ["review comments", "suggested changes"]
+
+escalation:
+  onLowConfidenceSecuritySensitiveDiff:
+    verdict: "request-changes"
+    status: "status:needs-human-review"
+    tagHumanReviewer: true
+
+idempotency:
+  key: "pr-<number>-review"
+  rerunBehavior: "update existing review comment/check-run in place"

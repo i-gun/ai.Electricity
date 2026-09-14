@@ -1,0 +1,47 @@
+name: codegen-agent
+displayName: Code Generation Agent
+singleResponsibility: >
+  Turn an approved spec/issue into a draft PR: source files + baseline unit tests, following
+  repo conventions and the shared-core/platform-adapter layering.
+
+trigger:
+  events: ["issues.labeled:agent:codegen"]
+  schema: ../schemas/task.schema.json
+
+inputs:
+  - feature_spec: "issue body"
+  - repo_conventions: "docs/conventions.md"
+  - architecture_snapshot: "docs/architecture/*"
+  - shared_core_package: "core/"
+
+outputs:
+  - branch: "feat/<issue-number>-<slug>"
+  - source_files: true
+  - baseline_unit_tests: true
+  - pull_request:
+      draft: true
+      links_issue: true
+  - report: ../schemas/agent-report.schema.json
+
+skillsAndTools:
+  - spec-to-code scaffolding
+  - platform adapter generation (desktop shell, mobile shell) against core/business-logic
+  - local lint runner
+  - local build runner
+
+constraints:
+  - never_push_to: ["main", "release/*"]
+  - must_pass_before_ready_for_review: ["lint", "build"]
+  - max_self_correction_attempts: 3
+
+escalation:
+  onAmbiguousSpec:
+    label: "agent:advisory"
+    status: "status:blocked"
+  onBuildFailureAfterRetries:
+    label: "agent:error-resolution"
+    status: "status:blocked"
+
+idempotency:
+  key: "issue-<number>"
+  rerunBehavior: "update existing draft PR branch, do not create a duplicate branch/PR"

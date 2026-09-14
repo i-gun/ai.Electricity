@@ -1,0 +1,42 @@
+# Orchestrator config — pure routing table, no decision logic of its own.
+# Consumed by .github/workflows/router-*.yml. State lives in GitHub labels/checks only.
+name: orchestrator
+role: coordination-only
+stateless: true
+
+routes:
+  - on: "issues.opened"
+    when_label_any: ["type:feature", "type:bug"]
+    dispatch_to: codegen-agent
+    set_label: "agent:codegen"
+
+  - on: "issues.labeled"
+    when_label: "agent:advisory"
+    dispatch_to: advisory-agent
+
+  - on: "pull_request.opened"
+    dispatch_to: [review-agent, testing-agent]
+    note: "Parallel, decoupled — each posts its own check-run independently."
+
+  - on: "pull_request.synchronize"
+    dispatch_to: [review-agent, testing-agent]
+
+  - on: "workflow_run.completed"
+    when: "conclusion == 'failure' && name == 'ci-build-test'"
+    dispatch_to: error-resolution-agent
+    set_label: "agent:error-resolution"
+
+  - on: "pull_request.checks_requested"
+    when: "review-agent/verdict == 'approve' && testing-agent/gate == 'pass'"
+    dispatch_to: vcs-agent
+    action: merge
+
+  - on: "create"
+    when: "ref_type == 'tag' && ref matches 'v*.*.*'"
+    dispatch_to: vcs-agent
+    action: release
+
+labels:
+  routing: ["agent:codegen", "agent:review", "agent:testing", "agent:advisory", "agent:error-resolution", "agent:vcs"]
+  status: ["status:blocked", "status:escalated", "status:needs-human-review", "status:needs-human-approval", "status:root-cause-unclear"]
+  type: ["type:feature", "type:bug", "type:tech-debt", "type:adr-followup"]

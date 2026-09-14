@@ -1,0 +1,51 @@
+name: testing-agent
+displayName: Testing Agent
+singleResponsibility: >
+  Author/expand tests, detect coverage gaps, run the cross-platform (desktop + mobile) test
+  matrix, and produce the pass/fail merge gate.
+
+trigger:
+  events: ["pull_request.opened", "pull_request.synchronize"]
+  schema: ../schemas/task.schema.json
+
+inputs:
+  - source_diff: true
+  - existing_coverage_report: "/coverage/lcov.info"
+  - platform_matrix: "docs/platform-matrix.md"
+
+outputs:
+  - new_or_updated_tests: true
+  - coverage_report: "/coverage/lcov.info"
+  - required_check: "testing-agent/gate"
+  - flaky_test_quarantine_list: "docs/flaky-tests.md"
+  - report: ../schemas/agent-report.schema.json
+
+skillsAndTools:
+  - unit/integration/e2e-smoke test authoring
+  - coverage-gap detection
+  - cross-platform execution (desktop targets + mobile emulators/simulators in CI)
+  - fixture/test-data generation
+  - flaky-test detection & quarantine
+
+coverageThresholds:
+  overall_lines: 90
+  overall_branches: 90
+  core_business_logic_path: "core/business-logic/**"
+  core_business_logic_lines: 100
+  core_business_logic_branches: 100
+
+constraints:
+  - gate_fails_merge_if: "coverage below threshold OR any platform in matrix fails"
+  - flaky_tests: "quarantine (mark skip + track), never silently delete"
+
+escalation:
+  onCoverageUnreachableWithoutSpecChange:
+    label: "agent:advisory"
+    gate: "fail"
+  onEmulatorTargetUnavailableInCI:
+    label: "agent:advisory"
+    gate: "fail"
+
+idempotency:
+  key: "pr-<number>-testing"
+  rerunBehavior: "update existing coverage report/check-run in place"
