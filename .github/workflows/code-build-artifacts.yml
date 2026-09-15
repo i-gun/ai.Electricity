@@ -191,7 +191,7 @@ jobs:
       - name: Resolve workspace and generate sources
         run: |
           dart pub get
-        
+
       - name: Generate Drift sources
         working-directory: data
         run: dart run build_runner build --delete-conflicting-outputs
