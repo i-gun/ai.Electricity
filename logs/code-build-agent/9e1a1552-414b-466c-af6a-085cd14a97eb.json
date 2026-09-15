@@ -1,0 +1,15 @@
+﻿{
+    "errors":  [
+                   "Cannot locate the history for command line C:\\Users\\IgorGunia\\Desktop\\dev\\ai.Electricity\\build\\code-build-agent\\9e1a1552-414b-466c-af6a-085cd14a97eb\\windows-debug-bundle-1f381bf0946149448539e5f5c84aae68dc6727a8.",
+                   "Cannot locate the history for command line C:\\Users\\IgorGunia\\Desktop\\dev\\ai.Electricity\\build\\code-build-agent\\9e1a1552-414b-466c-af6a-085cd14a97eb\\android-debug-apk-1f381bf0946149448539e5f5c84aae68dc6727a8."
+               ],
+    "idempotencyKey":  "1f381bf0946149448539e5f5c84aae68dc6727a8:android,windows:debug:apk,bundle",
+    "artifacts":  [
+
+                  ],
+    "sourceRef":  "main",
+    "status":  "completed-with-limitations",
+    "runId":  "9e1a1552-414b-466c-af6a-085cd14a97eb",
+    "commit":  "1f381bf0946149448539e5f5c84aae68dc6727a8",
+    "runnerOS":  "Windows"
+}

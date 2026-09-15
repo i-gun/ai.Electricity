@@ -1,0 +1,4 @@
+# Review policy: see docs/conventions.md and agents/code-review-agent.yaml.
+# GitHub requests these owners as reviewers on matching PRs; branch protection
+# must separately require their approval for the check to be enforced.
+* @i-gun @vmta

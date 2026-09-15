@@ -3,7 +3,10 @@
 ## Layout
 
 ```
+pubspec.yaml       Dart pub workspace manifest for all five packages
+analysis_options.yaml shared analyzer and lint rules for every package
 core/              pure-Dart domain & business logic (no platform UI imports) — 100% coverage required
+data/              Drift/SQLite persistence implementations; generated code is build-time only
 ui/                platform-agnostic shared Flutter widgets
 apps/mobile/       Flutter mobile app shell (iOS/Android adapters only)
 apps/desktop/      Flutter desktop app shell (Windows/macOS/Linux adapters only)
@@ -11,7 +14,7 @@ docs/              architecture notes, ADRs, conventions, agent-facing reference
 agents/            machine-readable agent configs
 schemas/           JSON schemas for inter-agent messages
 .github/workflows/ CI + agent-routing workflows
-logs/              per-agent-run audit trail (uploaded as CI artifacts)
+logs/              small structured per-agent-run audit reports (uploaded as CI artifacts; verbose *.build-log.json files are ignored)
 ```
 
 ## Commit messages
@@ -35,4 +38,14 @@ logs/              per-agent-run audit trail (uploaded as CI artifacts)
 
 - `review-agent/verdict`
 - `testing-agent/gate`
-- `ci-build-test` (platform matrix build)
+- `quality` (analysis and package coverage generation)
+- `coverage-gate`
+- `ci-build-test` platform build jobs
+
+## Artifact builds
+
+`code-build-artifacts.yml` is workflow-dispatch only. It builds from a resolved immutable commit
+after explicit confirmation of every selected platform, mode, and format, then uploads a retained
+manifest, checksums, logs, and real discovered outputs. It is not a release or publishing workflow;
+signed Android bundles, signed iOS IPAs, notarized macOS apps, and installers are unsupported until
+an approved ADR and configuration exist.

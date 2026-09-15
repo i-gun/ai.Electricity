@@ -1,0 +1,235 @@
+name: code-build-artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag, or commit to build
+        required: true
+        type: string
+      platforms:
+        description: JSON array, for example ["windows","android"]
+        required: true
+        type: string
+      build_mode:
+        description: Flutter build mode
+        required: true
+        type: choice
+        options: [debug, profile, release]
+      artifact_formats:
+        description: JSON object, for example {"windows":"bundle"}
+        required: true
+        type: string
+      confirmation:
+        description: Confirm every requested platform, mode, and format
+        required: true
+        type: choice
+        options: [confirmed]
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject unconfirmed or malformed dispatch before checkout
+        id: validate
+        continue-on-error: true
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          PLATFORMS: ${{ inputs.platforms }}
+          RUN_ID: ${{ github.run_id }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path 'logs/code-build-agent' | Out-Null
+          try {
+            if ($env:CONFIRMATION -cne 'confirmed') { throw 'Confirmation must be exactly confirmed.' }
+            try { $platforms = @((ConvertFrom-Json -InputObject $env:PLATFORMS) | ForEach-Object { $_ }) } catch { throw 'Platforms must be a JSON array.' }
+            $allowed = @('android', 'ios', 'linux', 'macos', 'windows')
+            if ($platforms.Count -eq 0 -or @($platforms | Where-Object { $_ -isnot [string] -or $allowed -notcontains $_.ToLowerInvariant() }).Count -gt 0) { throw 'Platforms must be a non-empty allow-listed JSON array.' }
+            if (@($platforms | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object -Unique).Count -ne $platforms.Count) { throw 'Platforms must not contain duplicates.' }
+            $status = 'completed'
+            $summary = 'Dispatch inputs passed pre-check.'
+          } catch {
+            $status = 'blocked'
+            $summary = $_.Exception.Message
+            $failure = $_.Exception.Message
+          }
+          @{ agent = 'code-build-agent'; runId = $env:RUN_ID; taskId = $env:RUN_ID; timestamp = [DateTime]::UtcNow.ToString('o'); status = $status; summary = $summary; confidence = 1.0 } | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8 -Path "logs/code-build-agent/$($env:RUN_ID).json"
+          if ($failure) { throw $failure }
+      - name: Upload preflight report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-build-preflight-${{ github.run_id }}
+          path: logs/code-build-agent/${{ github.run_id }}.json
+          retention-days: 14
+      - name: Stop after failed preflight
+        if: steps.validate.outcome == 'failure'
+        run: exit 1
+
+  prepare:
+    needs: preflight
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      matrix: ${{ steps.normalize.outputs.matrix }}
+      build_mode: ${{ steps.normalize.outputs.build_mode }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - name: Resolve immutable source and protected branch relation
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Resolved commit: $sha"
+          if git show-ref --verify --quiet refs/remotes/origin/main; then
+            git merge-base --is-ancestor origin/main HEAD || { echo 'Requested ref is behind origin/main.'; exit 1; }
+            echo 'Protected branch comparison: requested ref contains origin/main.'
+          else
+            echo 'Protected branch comparison unavailable; no origin/main ref was fetched.'
+          fi
+      - name: Normalize and validate selected matrix
+        id: normalize
+        shell: pwsh
+        env:
+          PLATFORMS: ${{ inputs.platforms }}
+          FORMATS: ${{ inputs.artifact_formats }}
+          BUILD_MODE: ${{ inputs.build_mode }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          $result = & .github/scripts/validate_build_inputs.ps1 -Platforms $env:PLATFORMS -ArtifactFormats $env:FORMATS -BuildMode $env:BUILD_MODE -Confirmation $env:CONFIRMATION | ConvertFrom-Json
+          "matrix=$($result.matrix | ConvertTo-Json -Compress)" >> $env:GITHUB_OUTPUT
+          "build_mode=$($result.build_mode)" >> $env:GITHUB_OUTPUT
+
+  quality:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          fetch-depth: 1
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Resolve workspace
+        run: dart pub get
+      - name: Generate Drift sources
+        working-directory: data
+        run: dart run build_runner build --delete-conflicting-outputs
+      - name: Check formatting
+        run: dart format --output=none --set-exit-if-changed .
+      - name: Analyze workspace
+        run: flutter analyze
+      - name: Run scoped package tests
+        run: |
+          dart test --reporter compact
+        working-directory: core
+      - name: Test data package
+        run: flutter test --reporter compact
+        working-directory: data
+      - name: Test UI package
+        run: flutter test --reporter compact
+        working-directory: ui
+      - name: Test desktop shell
+        run: flutter test test/widget_test.dart --reporter compact
+        working-directory: apps/desktop
+      - name: Test mobile shell
+        run: flutter test test/widget_test.dart --reporter compact
+        working-directory: apps/mobile
+      - name: Record quality gate
+        run: echo "Quality gates passed for ${{ needs.prepare.outputs.sha }}"
+
+  build:
+    needs: [prepare, quality]
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          fetch-depth: 1
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Install Linux desktop dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libstdc++-12-dev
+      - name: Verify macOS and iOS toolchains
+        if: matrix.platform == 'macos' || matrix.platform == 'ios'
+        run: |
+          flutter doctor -v
+          xcode-select -p
+          xcodebuild -version
+          xcrun simctl list runtimes
+      - name: Verify iOS simulator runtime
+        if: matrix.platform == 'ios'
+        run: xcrun simctl list runtimes | grep -q 'iOS'
+      - name: Verify Linux desktop toolchain
+        if: matrix.platform == 'linux'
+        run: |
+          flutter doctor -v
+          cmake --version
+          ninja --version
+          pkg-config --modversion gtk+-3.0
+      - name: Enable desktop target
+        if: matrix.platform == 'windows' || matrix.platform == 'macos' || matrix.platform == 'linux'
+        run: flutter config --enable-${{ matrix.platform }}-desktop
+      - name: Resolve workspace and generate sources
+        run: |
+          dart pub get
+
+      - name: Generate Drift sources
+        working-directory: data
+        run: dart run build_runner build --delete-conflicting-outputs
+      - name: Build confirmed target
+        shell: pwsh
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          MODE: ${{ needs.prepare.outputs.build_mode }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $mode = "--$env:MODE"
+          switch ($env:PLATFORM) {
+            'windows' { Push-Location apps/desktop; flutter build windows $mode; Pop-Location }
+            'macos' { Push-Location apps/desktop; flutter build macos $mode; Pop-Location }
+            'linux' { Push-Location apps/desktop; flutter build linux $mode; Pop-Location }
+            'android' { Push-Location apps/mobile; flutter build apk --debug; Pop-Location }
+            'ios' { Push-Location apps/mobile; flutter build ios --simulator --no-codesign $mode; Pop-Location }
+            default { throw "Unexpected platform: $env:PLATFORM" }
+          }
+      - name: Collect real output
+        shell: pwsh
+        run: .github/scripts/collect_build_artifacts.ps1 -Platform '${{ matrix.platform }}' -BuildMode '${{ needs.prepare.outputs.build_mode }}' -Format '${{ matrix.format }}' -Workspace $PWD -StagingDirectory (Join-Path $PWD 'artifact-staging')
+      - name: Generate manifest and checksums
+        shell: pwsh
+        env:
+          FLUTTER_VERSION: ${{ '' }}
+        run: |
+          $flutterVersion = (flutter --version | Select-Object -First 1)
+          $dartVersion = (dart --version 2>&1 | Select-Object -First 1)
+          .github/scripts/write_build_manifest.ps1 -StagingDirectory (Join-Path $PWD 'artifact-staging') -OutputDirectory (Join-Path $PWD 'artifact-staging/report') -SourceRef '${{ inputs.ref }}' -CommitSha '${{ needs.prepare.outputs.sha }}' -RunId '${{ github.run_id }}' -RunnerOS '${{ runner.os }}' -FlutterVersion $flutterVersion -DartVersion $dartVersion
+      - name: Write structured report
+        shell: pwsh
+        run: |
+          $reportDir = 'artifact-staging/report/logs/code-build-agent'
+          New-Item -ItemType Directory -Force -Path $reportDir | Out-Null
+          @{ agent = 'code-build-agent'; runId = '${{ github.run_id }}-${{ matrix.platform }}'; taskId = '${{ github.run_id }}'; timestamp = [DateTime]::UtcNow.ToString('o'); status = 'completed'; summary = 'Built confirmed artifact from pinned commit.'; confidence = 1.0; artifacts = @(@{ kind = 'artifact-manifest'; ref = 'manifest.json' }, @{ kind = 'checksum'; ref = 'SHA256SUMS' }, @{ kind = 'actions-artifact'; ref = 'code-build-${{ matrix.platform }}-${{ needs.prepare.outputs.build_mode }}-${{ needs.prepare.outputs.sha }}' }, @{ kind = 'log'; ref = 'logs/code-build-agent/${{ github.run_id }}-${{ matrix.platform }}.json' }) } | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8 -Path (Join-Path $reportDir "${{ github.run_id }}-${{ matrix.platform }}.json")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: code-build-${{ matrix.platform }}-${{ needs.prepare.outputs.build_mode }}-${{ needs.prepare.outputs.sha }}
+          path: artifact-staging
+          retention-days: 14

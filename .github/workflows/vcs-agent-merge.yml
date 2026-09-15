@@ -1,0 +1,52 @@
+name: vcs-agent-merge (Version Control Agent)
+
+# Merges a PR onto its protected base once required gates are green.
+# Uses a scoped PAT (not the default GITHUB_TOKEN) so the resulting merge/tag
+# push cascades to other workflows (e.g. release.yml on a tag push) — pushes
+# authored by GITHUB_TOKEN never trigger further workflow runs.
+# See agents/version-control-agent.yaml for the full merge-policy contract.
+
+on:
+  pull_request_review:
+    types: [submitted]
+  check_suite:
+    types: [completed]
+  workflow_run:
+    workflows: ["ci-build-test"]
+    types: [completed]
+
+permissions:
+  pull-requests: write
+  contents: write
+  checks: read
+
+jobs:
+  merge-if-ready:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.VCS_AGENT_PR_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve PR for this event
+        id: pr
+        run: |
+          if [ -n "${{ github.event.pull_request.number }}" ]; then
+            echo "number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          else
+            pr=$(gh pr list --search "${{ github.sha }}" --state open --json number -q '.[0].number')
+            echo "number=$pr" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Verify required gates and merge
+        if: steps.pr.outputs.number != ''
+        run: |
+          pr=${{ steps.pr.outputs.number }}
+          decision=$(gh pr view "$pr" --json reviewDecision -q '.reviewDecision')
+          if [ "$decision" != "APPROVED" ]; then
+            echo "Not merging PR #$pr: review-agent/verdict not approved (reviewDecision=$decision)."
+            exit 0
+          fi
+          if ! gh pr checks "$pr" --required; then
+            echo "Not merging PR #$pr: required checks (incl. testing-agent/gate) are not all green yet."
+            exit 0
+          fi
+          gh pr merge "$pr" --squash --delete-branch

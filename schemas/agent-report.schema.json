@@ -16,6 +16,7 @@
         "error-resolution-agent",
         "vcs-agent",
         "testing-agent",
+        "code-build-agent",
         "orchestrator"
       ]
     },
@@ -44,7 +45,7 @@
         "type": "object",
         "required": ["kind", "ref"],
         "properties": {
-          "kind": { "type": "string", "enum": ["branch", "pull_request", "file", "tag", "release", "adr", "log"] },
+          "kind": { "type": "string", "enum": ["branch", "pull_request", "file", "tag", "release", "adr", "log", "artifact-manifest", "checksum", "actions-artifact"] },
           "ref": { "type": "string" }
         }
       }

@@ -20,7 +20,8 @@
         "test-request",
         "fix-request",
         "advisory-request",
-        "release-request"
+        "release-request",
+        "build-request"
       ]
     },
     "targetAgent": {
@@ -31,7 +32,8 @@
         "advisory-agent",
         "error-resolution-agent",
         "vcs-agent",
-        "testing-agent"
+        "testing-agent",
+        "code-build-agent"
       ]
     },
     "source": {

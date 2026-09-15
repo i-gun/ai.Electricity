@@ -84,7 +84,7 @@ Authoritative context you must read first: [`AGENTS.md`](../../AGENTS.md),
   generated/parameterised queries (no string-concatenated SQL).
 - `dart format` and `flutter analyze` clean; `build_runner` codegen committed or generated in CI
   before analyze/test.
-- Coverage gate: ≥ 90% overall, 100% for `core/business-logic/**`.
+- Coverage gate: ≥ 90% overall, 100% for `core/lib/**`.
 
 ### Out of scope (do not implement; file follow-up tickets instead)
 Cloud sync, accounts, CSV/JSON export & backup, OCR/photo meter reading, notifications/reminders,

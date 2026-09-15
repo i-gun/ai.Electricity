@@ -21,7 +21,7 @@ jobs:
         with:
           script: |
             core.notice('pull_request#' + context.payload.pull_request.number + ' routed to review-agent');
-      # Actual review-agent implementation is invoked here (external agent runtime / reusable workflow).
+      # review-agent.yml publishes the required review-agent/verdict check.
 
   route-testing-agent:
     if: github.event.pull_request.draft == false
@@ -32,4 +32,4 @@ jobs:
         with:
           script: |
             core.notice('pull_request#' + context.payload.pull_request.number + ' routed to testing-agent');
-      # Actual testing-agent implementation triggers ci-build-test.yml's matrix and posts testing-agent/gate.
+      # testing-agent.yml publishes the required testing-agent/gate check.

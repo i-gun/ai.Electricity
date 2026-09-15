@@ -21,6 +21,8 @@ Handle branch, PR, merge, changelog, tag, and release mechanics while enforcing 
 - `review-agent/verdict=approve` and `testing-agent/gate=pass`.
 - SemVer tag `v*.*.*` is created.
 - Human requests a release or merge-policy check.
+- Another agent (e.g. Code Build Agent) requests the current branch and working-tree status, or
+  requests staging/committing local changes on the human's behalf.
 
 ## Required Inputs
 
@@ -35,6 +37,9 @@ Handle branch, PR, merge, changelog, tag, and release mechanics while enforcing 
 - `CHANGELOG.md` entry.
 - SemVer tag.
 - GitHub Release.
+- Branch name and working-tree status (clean/dirty) report, on request from another agent.
+- A plain (non-merge) commit of staged local changes, only after the requesting agent relays
+  explicit human confirmation.
 - Report matching `schemas/agent-report.schema.json`.
 
 ## Rules
@@ -43,6 +48,8 @@ Handle branch, PR, merge, changelog, tag, and release mechanics while enforcing 
 - Never force-push without `/approve-force-push` from a maintainer.
 - Never rewrite shared history without explicit human approval.
 - Never bypass required checks.
+- Never stage or commit local changes on another agent's behalf without explicit human
+  confirmation relayed by the requesting agent.
 
 ## Escalation
 
