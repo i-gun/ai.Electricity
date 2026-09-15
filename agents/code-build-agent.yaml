@@ -1,0 +1,75 @@
+name: code-build-agent
+displayName: Code Build Agent
+singleResponsibility: >
+  Build, verify, checksum, and retain requested platform artifacts from a pinned commit after
+  provenance, confirmation, and quality gates pass.
+
+trigger:
+  events: ["workflow_dispatch:code-build-artifacts", "manual"]
+  schema: ../schemas/task.schema.json
+
+inputs:
+  - source_ref: "branch, tag, or commit ref"
+  - resolved_commit_sha: "full immutable commit SHA resolved after checkout"
+  - requested_platforms: "normalized platform list"
+  - requested_build_mode: "debug, profile, or release"
+  - requested_artifact_formats: "platform-to-format mapping"
+  - explicit_platform_confirmation: "confirmed for every selected target"
+  - issue_pr_release_reference: "optional issue, PR, or release reference"
+  - vcs_branch_and_worktree_status: "current branch name + clean/dirty status, obtained by consulting vcs-agent (human-invoked runs only)"
+
+outputs:
+  - artifact_manifest: true
+  - sha256_checksums: true
+  - github_actions_artifact_references: true
+  - build_logs: true
+  - report: ../schemas/agent-report.schema.json
+  - check_run: "code-build-agent/artifacts (non-merge informational check)"
+
+constraints:
+  - build_only_from: "resolved_commit_sha"
+  - no_artifact_creation_before: ["explicit platform confirmation", "quality gates"]
+  - never_inspect_or_mutate_git_state_directly: true # branch/working-tree status, staging, and commits are always delegated to vcs-agent
+  - never_modify_application_source: true
+  - never_publish_release: true
+  - never_tag_commit: true
+  - never_push: true
+  - never_merge: true
+  - never_force_push: true
+  - never_output_signing_secrets: true
+  - signed_or_published_artifacts_require: "future approved ADR/ticket and credentials outside this agent"
+
+qualityGates:
+  - vcs_branch_and_worktree_precheck # consult vcs-agent for branch name + clean/dirty status before any other gate
+  - dependency_resolution
+  - drift_source_generation
+  - formatting_validation
+  - flutter_analyze
+  - scoped_tests
+  - compatible_runner
+  - artifact_manifest_and_sha256
+
+retry:
+  maxAttempts: 3
+  retryOnly: ["transient runner or dependency failure"]
+
+escalation:
+  onAmbiguousConfirmation:
+    status: blocked
+    action: "stop without checkout/build and request renewed confirmation"
+  onNonMainBranchWithCleanTree:
+    status: blocked
+    action: "ask the human to explicitly confirm building on the current non-main branch before proceeding"
+  onDirtyWorkingTree:
+    status: blocked
+    action: "ask the human whether to stage/commit local changes; if confirmed, delegate to vcs-agent and re-run the vcs_branch_and_worktree_precheck gate; otherwise stay blocked"
+  onUnsupportedPlatformOrFormat:
+    status: blocked
+    action: "report concrete limitation; route to advisory only for new architecture"
+  onValidationOrBuildDefect:
+    status: blocked
+    action: "route to error-resolution-agent without editing application source"
+
+idempotency:
+  key: "<commit-sha>:<normalized-platforms>:<build-mode>:<normalized-formats>"
+  rerunBehavior: "reuse the same workflow/report context and avoid duplicate logical manifests"

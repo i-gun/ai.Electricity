@@ -1,9 +1,5 @@
 name: ci-build-test
 
-# Cross-platform build+test matrix required by Testing Agent's gate (see agents/testing-agent.yaml
-# and docs/platform-matrix.md). Failure here is routed by router-ci-failure.yml to
-# error-resolution-agent.
-
 on:
   pull_request:
   push:
@@ -11,20 +7,94 @@ on:
 
 permissions:
   contents: read
-  checks: write
 
 jobs:
-  desktop:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Resolve workspace
+        run: dart pub get
+      - name: Install coverage formatter
+        run: dart pub global activate coverage
+      - name: Generate Drift sources
+        working-directory: data
+        run: dart run build_runner build --delete-conflicting-outputs
+      - name: Check formatting
+        run: dart format --output=none --set-exit-if-changed .
+      - name: Analyze workspace
+        run: flutter analyze
+      - name: Test core with coverage
+        working-directory: core
+        run: |
+          dart test --coverage=coverage/raw
+          dart pub global run coverage:format_coverage --lcov --in=coverage/raw --out=coverage/core.lcov --packages=../.dart_tool/package_config.json --report-on=lib
+      - name: Test data with coverage
+        working-directory: data
+        run: flutter test --coverage
+      - name: Test ui with coverage
+        working-directory: ui
+        run: flutter test --coverage
+      - name: Test desktop shell with coverage
+        working-directory: apps/desktop
+        run: flutter test test/widget_test.dart --coverage
+      - name: Test mobile shell with coverage
+        working-directory: apps/mobile
+        run: flutter test test/widget_test.dart --coverage
+      - name: Collect package coverage
+        run: |
+          mkdir -p coverage-artifacts
+          cp core/coverage/core.lcov coverage-artifacts/core.lcov
+          cp data/coverage/lcov.info coverage-artifacts/data.lcov
+          cp ui/coverage/lcov.info coverage-artifacts/ui.lcov
+          cp apps/desktop/coverage/lcov.info coverage-artifacts/desktop.lcov
+          cp apps/mobile/coverage/lcov.info coverage-artifacts/mobile.lcov
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-packages
+          path: coverage-artifacts
+
+  coverage-gate:
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-packages
+          path: coverage-artifacts
+      - name: Enforce coverage thresholds
+        run: bash .github/scripts/check_coverage.sh coverage-artifacts coverage/lcov.info
+
+  platform-build:
+    needs: quality
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
             target: windows
+            directory: apps/desktop
+            command: flutter build windows
           - os: macos-latest
             target: macos
+            directory: apps/desktop
+            command: flutter build macos
           - os: ubuntu-latest
             target: linux
+            directory: apps/desktop
+            command: flutter build linux
+          - os: ubuntu-latest
+            target: android
+            directory: apps/mobile
+            command: flutter build apk --debug
+          - os: macos-latest
+            target: ios
+            directory: apps/mobile
+            command: flutter build ios --simulator --no-codesign
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -32,57 +102,13 @@ jobs:
         with:
           channel: stable
       - name: Enable desktop target
+        if: matrix.target == 'windows' || matrix.target == 'macos' || matrix.target == 'linux'
         run: flutter config --enable-${{ matrix.target }}-desktop
-      - name: Analyze
-        run: flutter analyze
-      - name: Unit + widget tests with coverage
-        run: flutter test --coverage
+      - name: Resolve workspace
+        run: dart pub get
+      - name: Generate Drift sources
+        working-directory: data
+        run: dart run build_runner build --delete-conflicting-outputs
       - name: Build ${{ matrix.target }}
-        run: flutter build ${{ matrix.target }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: coverage-${{ matrix.target }}
-          path: coverage/lcov.info
-
-  mobile:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: android
-          - os: macos-latest
-            target: ios
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-      - name: Analyze
-        run: flutter analyze
-      - name: Unit + widget tests with coverage
-        run: flutter test --coverage
-      - name: Build Android (debug APK)
-        if: matrix.target == 'android'
-        run: flutter build apk --debug
-      - name: Build iOS (simulator)
-        if: matrix.target == 'ios'
-        run: flutter build ios --simulator --no-codesign
-      - uses: actions/upload-artifact@v4
-        with:
-          name: coverage-${{ matrix.target }}
-          path: coverage/lcov.info
-
-  coverage-gate:
-    needs: [desktop, mobile]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          path: coverage-artifacts
-      - name: Enforce coverage thresholds (see agents/testing-agent.yaml)
-        run: |
-          echo "Aggregating coverage-artifacts/* and enforcing >=90% overall, 100% for core/business-logic/**"
-          # Placeholder aggregation step: replace with lcov merge + threshold check tooling.
+        working-directory: ${{ matrix.directory }}
+        run: ${{ matrix.command }}

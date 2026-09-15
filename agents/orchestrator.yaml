@@ -36,6 +36,10 @@ routes:
     dispatch_to: vcs-agent
     action: release
 
+  - on: "workflow_dispatch:code-build-artifacts"
+    dispatch_to: code-build-agent
+    note: "Manual, confirmation-gated artifact verification only; never automatic on push, PR, merge, tag, or release."
+
 labels:
   routing: ["agent:codegen", "agent:review", "agent:testing", "agent:advisory", "agent:error-resolution", "agent:vcs"]
   status: ["status:blocked", "status:escalated", "status:needs-human-review", "status:needs-human-approval", "status:root-cause-unclear"]

@@ -8,6 +8,8 @@ trigger:
   events:
     - "pull_request.checks_requested[review-agent/verdict=approve,testing-agent/gate=pass]"
     - "create[ref_type=tag,ref=v*.*.*]"
+    - "agent_request:branch_and_worktree_status"
+    - "agent_request:stage_commit_local_changes"
   schema: ../schemas/task.schema.json
 
 inputs:
@@ -15,12 +17,16 @@ inputs:
   - review_verdict: "review-agent/verdict"
   - testing_gate: "testing-agent/gate"
   - commit_history: "Conventional Commits"
+  - requesting_agent: "optional; identifies the agent asking for status or a stage/commit action"
+  - human_confirmation: "required before staging/committing on another agent's behalf"
 
 outputs:
   - merged_commit: true
   - changelog_entry: "CHANGELOG.md"
   - semver_tag: true
   - github_release: true
+  - branch_and_worktree_status_report: "current branch name + clean/dirty status, returned to the requesting agent"
+  - plain_commit: "non-merge commit of staged local changes, only after relayed human confirmation"
   - report: ../schemas/agent-report.schema.json
 
 skillsAndTools:
@@ -30,11 +36,24 @@ skillsAndTools:
   - merge-policy enforcement (required checks)
   - changelog generation
   - SemVer tagging
+  - branch/working-tree status reporting for other agents
+  - staging/committing local changes on explicit human confirmation relayed by a requesting agent
 
 constraints:
   - merge_requires_all: ["review-agent/verdict=approve", "testing-agent/gate=pass"]
   - never_force_pushes_without: "human /approve-force-push comment from a maintainer"
   - never_rewrites_shared_history_without_human_approval: true
+  - one_pr_in_flight: true # reuse the existing open branch/PR for follow-up commits; never stack a new branch on an unmerged PR
+  - never_stage_or_commit_on_behalf_of_agent_without_human_confirmation: true
+  - merge_token_scope: "least-privilege PAT (Contents + Pull requests: Read/write only), stored as the 'VCS_AGENT_PR_TOKEN' Actions secret, distinct from any admin-scoped token"
+
+maintenance:
+  branchProtectionDriftCheck:
+    script: "../.github/scripts/verify_branch_protection.py"
+    purpose: "Confirms GitHub's actual branch protection matches the constraints declared above; run periodically or before relying on this contract as the merge gate."
+  mergeWorkflow:
+    workflow: "../.github/workflows/vcs-agent-merge.yml"
+    purpose: "Performs the actual gh pr merge once review-agent/verdict=approve and testing-agent/gate=pass, using VCS_AGENT_PR_TOKEN so the merge cascades to other workflows."
 
 escalation:
   onRequiredChecksStuckFailing:

@@ -19,7 +19,7 @@ Human-invocable agent: `.github/agents/testing-agent.agent.md`.
 2. Read existing `/coverage/lcov.info` when available.
 3. Add or expand tests for changed behavior.
 4. Run the relevant unit, integration, and platform smoke checks.
-5. Enforce thresholds: 90% overall lines/branches, 100% lines/branches for `core/business-logic/**`.
+5. Enforce thresholds: 90% overall lines/branches, 100% lines/branches for `core/lib/**`.
 6. Update `docs/flaky-tests.md` for quarantined flaky tests.
 7. Emit `testing-agent/gate` and a report matching `schemas/agent-report.schema.json`.
 

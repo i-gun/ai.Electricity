@@ -100,7 +100,7 @@ Every agent, on every run, must:
 | **Inputs** | Source diff, existing coverage report (`/coverage/lcov.info`), target platform matrix (`docs/platform-matrix.md`). |
 | **Outputs** | New/expanded unit/integration/e2e-smoke tests, updated coverage report, a required GitHub check `testing-agent/gate` (`pass`/`fail`), flaky-test quarantine list (`docs/flaky-tests.md`). |
 | **Skills/Tools** | Unit/integration/e2e authoring, coverage-gap detection, cross-platform test execution (desktop targets + mobile emulators/simulators in CI), fixture/test-data generation. |
-| **Constraints** | Gate fails merge if line/branch coverage < **90%** overall, or < **100%** for files under `core/business-logic/**` (critical domain logic). Flaky tests are quarantined (marked `@skip` + tracked), not silently deleted. |
+| **Constraints** | Gate fails merge if line/branch coverage < **90%** overall, or < **100%** for files under `core/lib/**` (critical domain logic). Flaky tests are quarantined (marked `@skip` + tracked), not silently deleted. |
 | **Escalation** | Cannot raise coverage without a spec/architecture change, or a platform emulator target is unavailable in CI → escalate to `agent:advisory` (spec/tooling gap) with the gate left at `fail`. |
 
 ## 7. Orchestrator
@@ -117,6 +117,7 @@ other directly.
 | `pull_request` all required checks green | Version Control Agent (merge) |
 | `create` (tag `v*.*.*`) | Version Control Agent (release) |
 | pain-point report comment (`agent:advisory` label) from any agent | Advisory Agent |
+| `workflow_dispatch:code-build-artifacts` | Code Build Agent (manual, confirmation-gated artifact verification) |
 
 State lives entirely in GitHub labels/issue status (`status:*`) and PR check-runs — the Orchestrator
 itself is stateless and only re-derives routing from the current event + current labels.
@@ -128,3 +129,16 @@ itself is stateless and only re-derives routing from the current event + current
 - Secrets/credentials are never generated, logged, or requested by any agent.
 - All destructive git operations (force-push, history rewrite, branch deletion of shared branches, major dependency bumps) require an explicit human approval comment before the Version Control Agent will act.
 - Every agent run produces an audit entry under `/logs/<agent>/<run-id>.json` in addition to its human-facing comment.
+
+## 8. Code Build Agent
+
+The Code Build Agent is manually invoked through `code-build-artifacts.yml` only. It resolves a
+branch/ref to an immutable commit, requires explicit confirmation of every platform, mode, and
+format, runs the quality and capability gates, and retains checksummed artifacts and logs. When
+human-invoked, it first consults the Version Control Agent for the current branch and working-tree
+status: on a clean `main` tree it proceeds; on a clean non-`main` tree it explicitly asks whether to
+build on the current branch; on a dirty tree it explicitly asks whether to stage/commit local
+changes and, if confirmed, delegates that to the Version Control Agent before re-checking. It never
+inspects or mutates git state directly, never changes application source, publishes releases, tags
+or pushes commits, merges pull requests, or creates signed/distribution artifacts without a future
+approved design. Version Control Agent, Review Agent, and Testing Agent ownership is unchanged.

@@ -38,7 +38,7 @@ Author or expand tests, detect coverage gaps, run the cross-platform desktop/mob
 ## Rules
 
 - Fail the gate if coverage drops below 90% overall lines/branches.
-- Fail the gate unless `core/business-logic/**` has 100% line/branch coverage.
+- Fail the gate unless `core/lib/**` has 100% line/branch coverage.
 - Fail the gate if any platform in the matrix fails.
 - Quarantine flaky tests with tracking, never silently delete them.
 

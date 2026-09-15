@@ -1,0 +1,51 @@
+﻿{
+    "confirmedSha":  "2e89db2c0be7479cc18714a08a98a18c23a85d9e",
+    "sourceRef":  "main",
+    "mode":  "debug",
+    "idempotencyKey":  "5eb81a00-50d0-43ba-b690-85fe728ea417:main:2e89db2c0be7479cc18714a08a98a18c23a85d9e:debug",
+    "commandsRun":  [
+                        "git ls-tree -r --name-only 2e89db2c0be7479cc18714a08a98a18c23a85d9e -- apps flutter doctor -v flutter build windows --debug Get-Process java,javaw and APK existence check"
+                    ],
+    "gates":  {
+                  "provenance":  {
+                                     "status":  "passed",
+                                     "reason":  "Confirmed pinned source SHA and source reference."
+                                 },
+                  "dependency":  {
+                                     "status":  "skipped",
+                                     "reason":  "Skipped due provenance-source mismatch."
+                                 },
+                  "codegen":  {
+                                  "status":  "skipped",
+                                  "reason":  "Skipped due provenance-source mismatch."
+                              },
+                  "format":  {
+                                 "status":  "skipped",
+                                 "reason":  "Skipped due provenance-source mismatch."
+                             },
+                  "analyze":  {
+                                  "status":  "skipped",
+                                  "reason":  "Skipped due provenance-source mismatch."
+                              },
+                  "tests":  {
+                                "status":  "skipped",
+                                "reason":  "Skipped due provenance-source mismatch."
+                            },
+                  "builds":  {
+                                 "status":  "skipped",
+                                 "reason":  "Skipped due provenance-source mismatch."
+                             }
+              },
+    "blockedTargets":  [
+                           "windows",
+                           "android",
+                           "macos",
+                           "linux",
+                           "ios"
+                       ],
+    "artifacts":  [
+
+                  ],
+    "sourceFilesModified":  false,
+    "checkCreation":  "unavailable-local-environment"
+}

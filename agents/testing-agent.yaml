@@ -30,7 +30,7 @@ skillsAndTools:
 coverageThresholds:
   overall_lines: 90
   overall_branches: 90
-  core_business_logic_path: "core/business-logic/**"
+  core_business_logic_path: "core/lib/**"
   core_business_logic_lines: 100
   core_business_logic_branches: 100
 

@@ -25,7 +25,7 @@ outputs:
 
 skillsAndTools:
   - spec-to-code scaffolding
-  - platform adapter generation (desktop shell, mobile shell) against core/business-logic
+  - platform adapter generation (desktop shell, mobile shell) against core/lib
   - local lint runner
   - local build runner
 

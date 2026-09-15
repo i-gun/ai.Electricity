@@ -1,0 +1,15 @@
+name: ai_electricity_workspace
+publish_to: none
+
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+
+workspace:
+  - core
+  - data
+  - ui
+  - apps/desktop
+  - apps/mobile

@@ -1,0 +1,29 @@
+# Dart and Flutter
+.dart_tool/
+build/
+coverage/
+*.g.dart
+*.freezed.dart
+
+# Flutter platform outputs
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+
+# IDE and OS files
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.DS_Store
+Thumbs.db
+
+# Generated platform files
+android/.gradle/
+android/local.properties
+ios/Pods/
+ios/.symlinks/
+macos/Pods/
+linux/flutter/ephemeral/
+windows/flutter/ephemeral/
