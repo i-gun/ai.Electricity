@@ -49,10 +49,9 @@ class _SharedHomeState extends State<SharedHome> {
   String rangeKey = '3M';
   String currencyCode = 'EUR';
 
-  List<TariffZone> get activeZones => zones
-      .where((zone) => !zone.isArchived)
-      .toList()
-    ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+  List<TariffZone> get activeZones =>
+      zones.where((zone) => !zone.isArchived).toList()
+        ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
 
   @override
   void initState() {
@@ -843,16 +842,15 @@ class StatsView extends StatelessWidget {
                                   sideTitles: SideTitles(
                                       showTitles: true,
                                       reservedSize: 32,
-                                      getTitlesWidget: (value, meta) =>
-                                          Padding(
-                                              padding: const EdgeInsets.only(
-                                                  top: 8),
-                                              child: Text(
-                                                  _formatDate(context,
-                                                      _dateFromDayValue(value)),
-                                                  style: Theme.of(context)
-                                                      .textTheme
-                                                      .labelSmall))))),
+                                      getTitlesWidget: (value, meta) => Padding(
+                                          padding:
+                                              const EdgeInsets.only(top: 8),
+                                          child: Text(
+                                              _formatDate(context,
+                                                  _dateFromDayValue(value)),
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .labelSmall))))),
                           lineBarsData: [
                             for (final zone in chartZones)
                               _cumulativeLine(readings, zone),
@@ -948,8 +946,8 @@ double _dayValue(DateTime date) =>
 DateTime _dateFromDayValue(double value) =>
     DateTime.fromMillisecondsSinceEpoch((value * 86400000).round());
 
-String _bucketLabel(BuildContext context, DateTime start,
-    ConsumptionGranularity granularity) {
+String _bucketLabel(
+    BuildContext context, DateTime start, ConsumptionGranularity granularity) {
   final locale = Localizations.localeOf(context).toString();
   return granularity == ConsumptionGranularity.month
       ? DateFormat.MMM(locale).format(start)
@@ -1437,8 +1435,7 @@ const _commonCurrencies = <String>[
 const _customCurrencyValue = '__custom__';
 
 class _CurrencyPicker extends StatelessWidget {
-  const _CurrencyPicker(
-      {required this.currencyCode, required this.onChanged});
+  const _CurrencyPicker({required this.currencyCode, required this.onChanged});
   final String currencyCode;
   final ValueChanged<String> onChanged;
 
