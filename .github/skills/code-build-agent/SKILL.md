@@ -47,7 +47,8 @@ credentials; this agent never requests or emits signing material.
    and generate a versioned JSON manifest.
 6. Upload immutable names containing platform, mode, and commit SHA, retaining build artifacts for
    14 days.
-7. Emit logs under `logs/code-build-agent/<run-id>.json` and a structured report. Re-runs use the
+7. Emit a small structured report under `logs/code-build-agent/<run-id>.json`. Do not persist verbose
+   `*.build-log.json` diagnostics in commits. Re-runs use the
    same idempotency key and must not create misleading duplicate logical manifests.
 
 ## Failure Handoff

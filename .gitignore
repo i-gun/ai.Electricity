@@ -27,3 +27,6 @@ ios/.symlinks/
 macos/Pods/
 linux/flutter/ephemeral/
 windows/flutter/ephemeral/
+
+# Verbose build logs are disposable; retain only structured agent reports
+logs/**/*.build-log.json

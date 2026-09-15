@@ -14,7 +14,7 @@ docs/              architecture notes, ADRs, conventions, agent-facing reference
 agents/            machine-readable agent configs
 schemas/           JSON schemas for inter-agent messages
 .github/workflows/ CI + agent-routing workflows
-logs/              per-agent-run audit trail (uploaded as CI artifacts)
+logs/              small structured per-agent-run audit reports (uploaded as CI artifacts; verbose *.build-log.json files are ignored)
 ```
 
 ## Commit messages

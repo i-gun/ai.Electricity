@@ -44,7 +44,7 @@ After valid confirmation:
 - Discover produced outputs; record relative paths and byte sizes.
 - Produce SHA-256 checksums and a versioned JSON artifact manifest.
 - Upload immutable artifact names containing platform, mode, and commit SHA, retained for 14 days.
-- Emit the structured build log under `logs/code-build-agent/<run-id>.json`, the agent report, and the informational `code-build-agent/artifacts` check.
+- Emit the small structured build report under `logs/code-build-agent/<run-id>.json`, the agent report, and the informational `code-build-agent/artifacts` check. Do not commit verbose `*.build-log.json` diagnostics.
 
 Constraints:
 - Do not modify application source.

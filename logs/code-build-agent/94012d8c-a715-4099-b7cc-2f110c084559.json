@@ -1,0 +1,15 @@
+﻿{
+    "runId":  "94012d8c-a715-4099-b7cc-2f110c084559",
+    "status":  "completed-with-limitations",
+    "commit":  "1f381bf0946149448539e5f5c84aae68dc6727a8",
+    "sourceRef":  "main",
+    "idempotencyKey":  "1f381bf0946149448539e5f5c84aae68dc6727a8:android,windows:debug:apk,bundle",
+    "runnerOS":  "Windows",
+    "artifacts":  [
+                      "windows-debug-bundle"
+                  ],
+    "errors":  [
+                   "Method invocation failed because [System.IO.Path] does not contain a method named \u0027GetRelativePath\u0027."
+               ],
+    "timestampUtc":  "2026-09-15T16:34:40.7619980Z"
+}

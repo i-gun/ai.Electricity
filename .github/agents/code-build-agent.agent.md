@@ -57,5 +57,6 @@ publishing are unsupported until an approved configuration and ADR/ticket exist.
 
 Run provenance, platform confirmation, dependency/code generation, formatting, analysis, scoped
 tests, compatible-host, and artifact-integrity gates in that order. The handoff is limited to
-artifacts, manifests, logs, and the structured report. Version Control Agent ownership of release,
+artifacts, manifests, the small structured audit report, and CI-retained diagnostics. Verbose
+`*.build-log.json` files are not committed. Version Control Agent ownership of release,
 tag, and publish flows remains unchanged.
