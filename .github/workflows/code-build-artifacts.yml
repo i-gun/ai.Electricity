@@ -163,6 +163,28 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+      - name: Install Linux desktop dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libstdc++-12-dev
+      - name: Verify macOS and iOS toolchains
+        if: matrix.platform == 'macos' || matrix.platform == 'ios'
+        run: |
+          flutter doctor -v
+          xcode-select -p
+          xcodebuild -version
+          xcrun simctl list runtimes
+      - name: Verify iOS simulator runtime
+        if: matrix.platform == 'ios'
+        run: xcrun simctl list runtimes | grep -q 'iOS'
+      - name: Verify Linux desktop toolchain
+        if: matrix.platform == 'linux'
+        run: |
+          flutter doctor -v
+          cmake --version
+          ninja --version
+          pkg-config --modversion gtk+-3.0
       - name: Enable desktop target
         if: matrix.platform == 'windows' || matrix.platform == 'macos' || matrix.platform == 'linux'
         run: flutter config --enable-${{ matrix.platform }}-desktop
