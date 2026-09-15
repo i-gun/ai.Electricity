@@ -12,7 +12,8 @@ void main() {
       expect(Kwh(2) + Kwh(3), Kwh(5));
       expect(Kwh(2).toString(), '2.000 kWh');
       expect(Kwh(2) == Kwh(2), isTrue);
-      expect(Kwh(2) == '2', isFalse);
+      const Object unrelatedValue = '2';
+      expect(Kwh(2) == unrelatedValue, isFalse);
       expect(Kwh(2).hashCode, Kwh(2).hashCode);
     });
 
@@ -24,7 +25,8 @@ void main() {
       expect(money * 1.5, Money(1851));
       expect(() => money + Money(1, currencyCode: 'USD'), throwsArgumentError);
       expect(money == Money(1234), isTrue);
-      expect(money == '12.34', isFalse);
+      const Object unrelatedValue = '12.34';
+      expect(money == unrelatedValue, isFalse);
       expect(money.hashCode, Money(1234).hashCode);
     });
 
@@ -34,7 +36,8 @@ void main() {
       expect(() => ZoneCode(''), throwsArgumentError);
       expect(() => ZoneCode('not valid'), throwsArgumentError);
       expect(ZoneCode('day') == ZoneCode('day'), isTrue);
-      expect(ZoneCode('day') == 'day', isFalse);
+      const Object unrelatedValue = 'day';
+      expect(ZoneCode('day') == unrelatedValue, isFalse);
       expect(ZoneCode('day').hashCode, ZoneCode('day').hashCode);
     });
 
