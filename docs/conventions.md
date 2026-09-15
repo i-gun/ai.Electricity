@@ -38,7 +38,9 @@ logs/              small structured per-agent-run audit reports (uploaded as CI 
 
 - `review-agent/verdict`
 - `testing-agent/gate`
-- `ci-build-test` (platform matrix build)
+- `quality` (analysis and package coverage generation)
+- `coverage-gate`
+- `ci-build-test` platform build jobs
 
 ## Artifact builds
 
