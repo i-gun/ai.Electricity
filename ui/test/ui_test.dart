@@ -72,6 +72,9 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Save'));
     await tester.pumpAndSettle();
 
+    await tester.scrollUntilVisible(find.text('Weekend'), 300,
+        scrollable: find.byType(Scrollable).last);
+    await tester.pumpAndSettle();
     expect(find.text('Weekend'), findsOneWidget);
   });
 
