@@ -1,11 +1,14 @@
 import 'dart:math' as math;
 
 class Kwh {
-  Kwh(num value) : value = _round(value.toDouble()) {
+  Kwh(num value) : value = _validatedValue(value);
+
+  static double _validatedValue(num value) {
     if (value < 0 || value.isNaN || value.isInfinite) {
       throw ArgumentError.value(
           value, 'value', 'must be finite and non-negative');
     }
+    return _round(value.toDouble());
   }
 
   final double value;

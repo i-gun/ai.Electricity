@@ -5,7 +5,15 @@ void main() {
   group('value objects', () {
     test('reject invalid kWh and preserves fixed precision', () {
       expect(() => Kwh(-1), throwsArgumentError);
+      expect(() => Kwh(double.nan), throwsArgumentError);
+      expect(() => Kwh(double.infinity), throwsArgumentError);
       expect(Kwh(12.3456).value, 12.346);
+      expect(Kwh(2) - Kwh(3), Kwh(0));
+      expect(Kwh(2) + Kwh(3), Kwh(5));
+      expect(Kwh(2).toString(), '2.000 kWh');
+      expect(Kwh(2) == Kwh(2), isTrue);
+      expect(Kwh(2) == '2', isFalse);
+      expect(Kwh(2).hashCode, Kwh(2).hashCode);
     });
 
     test('money uses integer minor units', () {
@@ -13,13 +21,33 @@ void main() {
       expect(money.minorUnits, 1234);
       expect(money + Money(66, currencyCode: 'EUR'),
           Money(1300, currencyCode: 'EUR'));
+      expect(money * 1.5, Money(1851));
+      expect(() => money + Money(1, currencyCode: 'USD'), throwsArgumentError);
+      expect(money == Money(1234), isTrue);
+      expect(money == '12.34', isFalse);
+      expect(money.hashCode, Money(1234).hashCode);
+    });
+
+    test('zone codes normalize valid values and reject invalid values', () {
+      expect(ZoneCode(' Day_1 ').value, 'day_1');
+      expect(ZoneCode('day-1').toString(), 'day-1');
+      expect(() => ZoneCode(''), throwsArgumentError);
+      expect(() => ZoneCode('not valid'), throwsArgumentError);
+      expect(ZoneCode('day') == ZoneCode('day'), isTrue);
+      expect(ZoneCode('day') == 'day', isFalse);
+      expect(ZoneCode('day').hashCode, ZoneCode('day').hashCode);
     });
 
     test('date ranges expose inclusive dates and presets', () {
       final range = DateRange(DateTime(2026, 1, 1), DateTime(2026, 1, 31));
       expect(range.contains(DateTime(2026, 1, 31)), isTrue);
+      expect(range.contains(DateTime(2025, 12, 31)), isFalse);
+      expect(range.days, 31);
       expect(DateRange.lastMonths(3, now: DateTime(2026, 4, 15)).end,
           DateTime(2026, 4, 15));
+      expect(DateRange.lastMonths(1).start.month, greaterThan(0));
+      expect(() => DateRange(DateTime(2026, 2, 1), DateTime(2026, 1, 1)),
+          throwsArgumentError);
     });
   });
 
@@ -54,6 +82,25 @@ void main() {
         calculator.granularityFor(
             DateRange(DateTime(2026, 1, 1), DateTime(2026, 7, 1))),
         ConsumptionGranularity.month);
+    expect(
+        calculator.granularityFor(
+            DateRange(DateTime(2026, 1, 1), DateTime(2026, 2, 15))),
+        ConsumptionGranularity.week);
+    expect(buckets[0].total, Kwh(10));
+  });
+
+  test('buckets weekly and monthly readings at period starts', () {
+    final calculator = ConsumptionCalculator();
+    final weekly = calculator.bucketed([
+      ConsumptionDelta(
+          DateTime(2026, 1, 1), DateTime(2026, 1, 7), Kwh(2), 'day')
+    ], DateRange(DateTime(2026, 1, 1), DateTime(2026, 2, 15)));
+    final monthly = calculator.bucketed([
+      ConsumptionDelta(
+          DateTime(2026, 1, 1), DateTime(2026, 3, 14), Kwh(3), 'day')
+    ], DateRange(DateTime(2026, 1, 1), DateTime(2026, 12, 31)));
+    expect(weekly.single.start, DateTime(2026, 1, 5));
+    expect(monthly.single.start, DateTime(2026, 3));
   });
 
   test('expenses use the historical rate for each delta', () {
@@ -98,6 +145,12 @@ void main() {
     expect(byZone['night']?.minorUnits, 40);
   });
 
+  test('expenses ignore dates without a matching rate', () {
+    final delta = ConsumptionDelta(
+        DateTime(2026, 1, 1), DateTime(2026, 1, 2), Kwh(10), 'day');
+    expect(ExpenseCalculator().calculate([delta], []).minorUnits, 0);
+  });
+
   test('copyWith preserves identity fields', () {
     final zone =
         TariffZone(1, ZoneCode('day'), 'Day', ZoneKind.day, isArchived: true);
@@ -114,6 +167,10 @@ void main() {
     final entry = MeterReading(0, 'day', DateTime(2026, 1, 1), Kwh(5));
     expect(entry.copyWith(id: 7).id, 7);
     expect(entry.copyWith(id: 7).zoneId, 'day');
+    expect(zone.copyWith().colorArgb, zone.colorArgb);
+    final openRate = TariffRate(2, 'day', Money(10), DateTime(2026, 1, 1));
+    expect(openRate.contains(DateTime(2026, 12, 31)), isTrue);
+    expect(openRate.copyWith().validFrom, openRate.validFrom);
   });
 
   test('validation returns explicit result types', () {
@@ -129,6 +186,31 @@ void main() {
           TariffRate(2, 'z', Money(1), DateTime(2026, 1, 15)),
         ]),
         isA<OverlappingRates>());
+    expect(ReadingValidator(DateTime(2026, 1, 2)).validateDuplicate(false),
+        isA<Valid>());
+    expect(ReadingValidator(DateTime(2026, 1, 2)).validateDecrease(3, 2, true),
+        isA<Valid>());
+    expect(
+        ReadingValidator(DateTime(2026, 1, 2))
+            .validateFuture(DateTime(2026, 1, 2)),
+        isA<Valid>());
+    expect(
+        RateValidator().overlaps([
+          TariffRate(1, 'z', Money(1), DateTime(2026, 1, 1),
+              validTo: DateTime(2026, 1, 2)),
+          TariffRate(2, 'z', Money(1), DateTime(2026, 1, 2)),
+        ]),
+        isA<Valid>());
+  });
+
+  test('reconciliation warns only beyond tolerance', () {
+    final reconciliation = ZoneReconciliation();
+    expect(reconciliation.compare(Kwh(10), [Kwh(9.95)]), isNull);
+    final warning =
+        reconciliation.compare(Kwh(10), [Kwh(9)], tolerance: Kwh(0.5));
+    expect(warning?.difference, Kwh(1));
+    expect(
+        ConsumptionBucket(DateTime(2026, 1, 1), {'day': Kwh(2)}).total, Kwh(2));
   });
 }
 
