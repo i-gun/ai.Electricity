@@ -1,0 +1,72 @@
+﻿{
+    "schema":  "code-build-agent-report/v1",
+    "run_id":  "6d9ff877-c208-41c6-82f2-f81ab41c6b6b",
+    "status":  "completed-with-limitations",
+    "timestamp":  "2026-09-15T14:13:38.8625015Z",
+    "commit_sha":  "8993e42e1e457798d1d9eb04ade49678cfb895b1",
+    "idempotency_key":  "8993e42e1e457798d1d9eb04ade49678cfb895b1:android,windows:debug:apk,bundle",
+    "passed_gates":  [
+                         "commit pinned to requested SHA",
+                         "desktop Debug output present",
+                         "Android debug APK present",
+                         "artifact files recursively enumerated and SHA-256 hashed",
+                         "manifest and SHA256SUMS written"
+                     ],
+    "build_results":  [
+                          {
+                              "target":  "windows",
+                              "variant":  "debug",
+                              "output":  "bundle",
+                              "status":  "passed",
+                              "source_path":  "apps/desktop/build/windows/x64/runner/Debug"
+                          },
+                          {
+                              "target":  "android",
+                              "variant":  "debug",
+                              "output":  "apk",
+                              "status":  "passed",
+                              "source_path":  "apps/mobile/build/app/outputs/flutter-apk/app-debug.apk"
+                          }
+                      ],
+    "artifact_paths":  [
+                           {
+                               "name":  "windows-debug-bundle-8993e42e1e457798d1d9eb04ade49678cfb895b1",
+                               "path":  "build/code-build-agent/6d9ff877-c208-41c6-82f2-f81ab41c6b6b/windows-debug-bundle-8993e42e1e457798d1d9eb04ade49678cfb895b1",
+                               "bytes":  118704950,
+                               "sha256":  "310f144e20e56ce8e31a6ee090c5ca75ec27af9e8cd318db2497ca73f82e2317",
+                               "files":  16
+                           },
+                           {
+                               "name":  "android-debug-apk-8993e42e1e457798d1d9eb04ade49678cfb895b1",
+                               "path":  "build/code-build-agent/6d9ff877-c208-41c6-82f2-f81ab41c6b6b/android-debug-apk-8993e42e1e457798d1d9eb04ade49678cfb895b1",
+                               "bytes":  177774404,
+                               "sha256":  "92ced16cb574cdda444dacfa640c7747ea8d0a54b483274862746ad031cf6370",
+                               "files":  null
+                           }
+                       ],
+    "unsupported_targets":  [
+                                {
+                                    "target":  "macOS",
+                                    "reason":  "Windows host cannot build macOS, Linux, or iOS simulator artifacts"
+                                },
+                                {
+                                    "target":  "Linux",
+                                    "reason":  "Windows host cannot build macOS, Linux, or iOS simulator artifacts"
+                                },
+                                {
+                                    "target":  "iOS simulator",
+                                    "reason":  "Windows host cannot build macOS, Linux, or iOS simulator artifacts"
+                                }
+                            ],
+    "informational_checks":  [
+                                 {
+                                     "name":  "code-build-agent/artifacts",
+                                     "status":  "informational",
+                                     "result":  "verification artifacts created"
+                                 }
+                             ],
+    "retention":  "14 days",
+    "errors":  [
+
+               ]
+}
