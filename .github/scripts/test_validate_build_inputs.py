@@ -12,23 +12,23 @@ import sys
 from pathlib import Path
 
 
-def run_validator(platforms: str, artifact_formats: str, build_mode: str, 
+def run_validator(platforms: str, artifact_formats: str, build_mode: str,
                  confirmation: str) -> tuple[int, str, str]:
     """
     Run validate_build_inputs.py and capture output.
-    
+
     Args:
         platforms: JSON array string
         artifact_formats: JSON object string
         build_mode: Build mode
         confirmation: Confirmation string
-    
+
     Returns:
         Tuple of (return_code, stdout, stderr)
     """
     script_dir = Path(__file__).parent
     script_path = script_dir / 'validate_build_inputs.py'
-    
+
     cmd = [
         sys.executable, str(script_path),
         '--platforms', platforms,
@@ -36,7 +36,7 @@ def run_validator(platforms: str, artifact_formats: str, build_mode: str,
         '--build-mode', build_mode,
         '--confirmation', confirmation,
     ]
-    
+
     result = subprocess.run(cmd, capture_output=True, text=True)
     return result.returncode, result.stdout, result.stderr
 
@@ -45,7 +45,7 @@ def assert_rejected(case_name: str, platforms: str, artifact_formats: str,
                    build_mode: str, confirmation: str, expected_error: str) -> None:
     """
     Assert that a validation case is rejected with expected error.
-    
+
     Args:
         case_name: Name of test case
         platforms: JSON array string
@@ -53,17 +53,17 @@ def assert_rejected(case_name: str, platforms: str, artifact_formats: str,
         build_mode: Build mode
         confirmation: Confirmation string
         expected_error: Expected error substring
-    
+
     Raises:
         AssertionError: If validation doesn't fail as expected
     """
     returncode, stdout, stderr = run_validator(
         platforms, artifact_formats, build_mode, confirmation
     )
-    
+
     if returncode == 0:
         raise AssertionError(f'Expected rejection for {case_name}.')
-    
+
     error_output = stderr + stdout
     if expected_error not in error_output:
         raise AssertionError(
@@ -74,7 +74,7 @@ def assert_rejected(case_name: str, platforms: str, artifact_formats: str,
 def main():
     """Run all validation tests."""
     print('Testing build input validation...', file=sys.stderr)
-    
+
     # Test valid configuration
     print('  Testing valid configuration...', file=sys.stderr)
     returncode, stdout, stderr = run_validator(
@@ -83,11 +83,11 @@ def main():
         'release',
         'confirmed'
     )
-    
+
     if returncode != 0:
         print(f'Error: Valid case failed: {stderr}', file=sys.stderr)
         return 1
-    
+
     try:
         result = json.loads(stdout)
         if result.get('platforms') != ['windows', 'android']:
@@ -97,7 +97,7 @@ def main():
     except (json.JSONDecodeError, AssertionError) as e:
         print(f'Error: Valid case JSON validation failed: {e}', file=sys.stderr)
         return 1
-    
+
     # Test error cases
     test_cases = [
         ('confirmation', '["windows"]', '{"windows":"bundle"}', 'debug', 'yes',
@@ -111,7 +111,7 @@ def main():
         ('android-debug', '["android"]', '{"android":"apk"}', 'debug', 'confirmed',
          'release APKs require release build mode'),
     ]
-    
+
     for case_name, platforms, formats, mode, confirm, expected_error in test_cases:
         print(f'  Testing {case_name}...', file=sys.stderr)
         try:
@@ -119,7 +119,7 @@ def main():
         except AssertionError as e:
             print(f'Error: {e}', file=sys.stderr)
             return 1
-    
+
     print('All build input validation tests passed.', file=sys.stderr)
     return 0
 

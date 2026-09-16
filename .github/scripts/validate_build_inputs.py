@@ -37,24 +37,24 @@ PLATFORM_RUNNERS = {
 def validate_inputs(platforms: str, artifact_formats: str, build_mode: str, confirmation: str) -> Dict[str, Any]:
     """
     Validate all build inputs and return normalized matrix.
-    
+
     Args:
         platforms: JSON array string of platform names
         artifact_formats: JSON object string mapping platforms to formats
         build_mode: Build mode (debug, profile, release)
         confirmation: Confirmation string (must be exactly 'confirmed')
-    
+
     Returns:
         Dictionary containing normalized platforms, build_mode, formats, and matrix
-    
+
     Raises:
         ValueError: If any validation fails
     """
-    
+
     # Validate confirmation
     if confirmation != 'confirmed':
         raise ValueError('Confirmation must be exactly confirmed.')
-    
+
     # Parse and validate platforms
     try:
         selected_platforms = json.loads(platforms)
@@ -62,25 +62,25 @@ def validate_inputs(platforms: str, artifact_formats: str, build_mode: str, conf
             raise ValueError()
     except (json.JSONDecodeError, ValueError):
         raise ValueError('Platforms must be a JSON array.')
-    
+
     # Check for empty or invalid platform values
     if not selected_platforms or not all(isinstance(p, str) and p.strip() for p in selected_platforms):
         raise ValueError('Platforms must be a non-empty JSON array of strings.')
-    
+
     # Normalize to lowercase
     normalized_platforms = [p.lower() for p in selected_platforms]
-    
+
     # Check for duplicates
     if len(set(normalized_platforms)) != len(normalized_platforms):
         raise ValueError('Platforms must not contain duplicates.')
-    
+
     # Validate each platform
     for platform in normalized_platforms:
         if platform not in ALLOWED_PLATFORMS:
             raise ValueError(f'Unknown platform: {platform}')
         if platform == 'android' and build_mode != 'release':
             raise ValueError('Android release APKs require release build mode.')
-    
+
     # Parse and validate artifact formats
     try:
         format_map = json.loads(artifact_formats)
@@ -88,7 +88,7 @@ def validate_inputs(platforms: str, artifact_formats: str, build_mode: str, conf
             raise ValueError()
     except (json.JSONDecodeError, ValueError):
         raise ValueError('ArtifactFormats must be a JSON object.')
-    
+
     # Validate formats for selected platforms
     for platform in normalized_platforms:
         if platform not in format_map:
@@ -97,12 +97,12 @@ def validate_inputs(platforms: str, artifact_formats: str, build_mode: str, conf
         if format_value != ALLOWED_FORMATS[platform]:
             raise ValueError(f'Unsupported or missing format for {platform}. '
                            f'Expected {ALLOWED_FORMATS[platform]}.')
-    
+
     # Check for extra formats
     extra_formats = [p for p in format_map.keys() if p not in normalized_platforms]
     if extra_formats:
         raise ValueError(f'Artifact formats contain unselected platforms: {", ".join(extra_formats)}.')
-    
+
     # Build matrix
     matrix = []
     for platform in normalized_platforms:
@@ -112,14 +112,14 @@ def validate_inputs(platforms: str, artifact_formats: str, build_mode: str, conf
             'format': ALLOWED_FORMATS[platform],
             'runner': runner,
         })
-    
+
     result = {
         'platforms': normalized_platforms,
         'build_mode': build_mode,
         'formats': format_map,
         'matrix': matrix,
     }
-    
+
     return result
 
 
@@ -135,17 +135,17 @@ def main():
                        help='Flutter build mode')
     parser.add_argument('--confirmation', required=True, help='Confirmation string (must be "confirmed")')
     parser.add_argument('--output-path', help='Optional: write output to file instead of stdout')
-    
+
     args = parser.parse_args()
-    
+
     try:
         result = validate_inputs(args.platforms, args.artifact_formats, args.build_mode, args.confirmation)
         json_output = json.dumps(result, separators=(',', ':'))
-        
+
         if args.output_path:
             with open(args.output_path, 'w', encoding='utf-8') as f:
                 f.write(json_output)
-        
+
         print(json_output)
         return 0
     except ValueError as e:

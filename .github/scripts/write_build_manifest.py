@@ -24,10 +24,10 @@ from typing import Dict, List, Any
 def compute_file_sha256(file_path: Path) -> str:
     """
     Compute SHA256 hash of a file.
-    
+
     Args:
         file_path: Path to file
-    
+
     Returns:
         Lowercase hex digest
     """
@@ -41,14 +41,14 @@ def compute_file_sha256(file_path: Path) -> str:
 def get_safe_relative_path(base: Path, path: Path) -> str:
     """
     Get a safe relative path from base to path, ensuring path doesn't escape base.
-    
+
     Args:
         base: Base directory
         path: Target path
-    
+
     Returns:
         Relative path with forward slashes
-    
+
     Raises:
         ValueError: If path escapes base directory
     """
@@ -64,7 +64,7 @@ def generate_manifest(staging_dir: str, output_dir: str, source_ref: str,
                      flutter_version: str, dart_version: str) -> Dict[str, Any]:
     """
     Generate build manifest and checksums.
-    
+
     Args:
         staging_dir: Staging directory with build artifacts
         output_dir: Output directory for manifest and checksums
@@ -74,47 +74,47 @@ def generate_manifest(staging_dir: str, output_dir: str, source_ref: str,
         runner_os: Runner OS name
         flutter_version: Flutter version
         dart_version: Dart version
-    
+
     Returns:
         Generated manifest dictionary
-    
+
     Raises:
         ValueError: If artifact paths escape staging directory
         FileNotFoundError: If entries.json not found
     """
     staging_path = Path(staging_dir).resolve()
     output_path = Path(output_dir).resolve()
-    
+
     # Create output directory
     output_path.mkdir(parents=True, exist_ok=True)
-    
+
     # Read entries
     entries_file = staging_path / 'entries.json'
     if not entries_file.exists():
         raise FileNotFoundError('No entries.json found in staging directory.')
-    
+
     with open(entries_file, 'r', encoding='utf-8') as f:
         entries = json.load(f)
-    
+
     manifest_entries: List[Dict[str, Any]] = []
     checksum_lines: List[str] = []
-    
+
     for entry in entries:
         artifact_path = (staging_path / entry['path']).resolve()
-        
+
         # Ensure path is within staging directory
         try:
             artifact_path.relative_to(staging_path)
         except ValueError:
             raise ValueError('Artifact path escaped staging.')
-        
+
         # Get all files recursively
         files = sorted(artifact_path.rglob('*'))
         files = [f for f in files if f.is_file()]
-        
+
         if not files:
             raise FileNotFoundError(f'Artifact has no files: {entry["path"]}')
-        
+
         # Compute checksums
         parts = []
         total_bytes = 0
@@ -124,11 +124,11 @@ def generate_manifest(staging_dir: str, output_dir: str, source_ref: str,
             parts.append(f'{relative_file}={file_hash}')
             total_bytes += file.stat().st_size
             checksum_lines.append(f'{file_hash}  {relative_file}')
-        
+
         # Compute aggregate hash
         aggregate_data = '\n'.join(parts).encode('utf-8')
         aggregate_hash = hashlib.sha256(aggregate_data).hexdigest().lower()
-        
+
         manifest_entries.append({
             'platform': entry['platform'],
             'build_mode': entry['build_mode'],
@@ -139,7 +139,7 @@ def generate_manifest(staging_dir: str, output_dir: str, source_ref: str,
             'build_status': 'completed',
             'warnings': [],
         })
-    
+
     # Create manifest
     manifest = {
         'schema': 'code-build-artifact-manifest/v1',
@@ -153,19 +153,19 @@ def generate_manifest(staging_dir: str, output_dir: str, source_ref: str,
         'artifacts': manifest_entries,
         'warnings': [],
     }
-    
+
     # Write manifest
     manifest_file = output_path / 'manifest.json'
     with open(manifest_file, 'w', encoding='utf-8') as f:
         json.dump(manifest, f, indent=2)
-    
+
     # Write checksums
     checksums_file = output_path / 'SHA256SUMS'
     with open(checksums_file, 'w', encoding='utf-8') as f:
         f.write('\n'.join(checksum_lines))
         if checksum_lines:
             f.write('\n')
-    
+
     return manifest
 
 
@@ -191,9 +191,9 @@ def main():
                        help='Flutter version')
     parser.add_argument('--dart-version', required=True,
                        help='Dart version')
-    
+
     args = parser.parse_args()
-    
+
     try:
         manifest = generate_manifest(
             args.staging_directory, args.output_directory,
