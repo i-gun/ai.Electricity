@@ -271,8 +271,13 @@ class ExpenseCalculator {
       {String currencyCode = 'EUR'}) {
     var total = Money(0, currencyCode: currencyCode);
     for (final delta in deltas) {
-      final matching =
-          rates.where((rate) => rate.zoneId == delta.zoneId).toList();
+      // Rates recorded in a different currency than requested can't be summed
+      // without a conversion rate, so they're excluded rather than crashing.
+      final matching = rates
+          .where((rate) =>
+              rate.zoneId == delta.zoneId &&
+              rate.pricePerKwh.currencyCode == currencyCode)
+          .toList();
       final duration = math.max(1, delta.to.difference(delta.from).inDays);
       for (var day = 0; day < duration; day++) {
         final date = delta.from.add(Duration(days: day));
