@@ -18,8 +18,10 @@ void main() {
           colorArgb: 0xff4285f4, sortOrder: 2),
     ];
     final rates = [
-      TariffRate(3, 'day', Money(486, currencyCode: 'UAH'), DateTime(2025, 9, 1)),
-      TariffRate(4, 'night', Money(243, currencyCode: 'UAH'), DateTime(2025, 9, 1)),
+      TariffRate(
+          3, 'day', Money(486, currencyCode: 'UAH'), DateTime(2025, 9, 1)),
+      TariffRate(
+          4, 'night', Money(243, currencyCode: 'UAH'), DateTime(2025, 9, 1)),
     ];
     final raw = <List<Object>>[
       ['day', DateTime(2025, 9, 1), 0.0],
