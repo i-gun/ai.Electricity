@@ -78,6 +78,11 @@ class _SharedHomeState extends State<SharedHome> {
         rates
           ..clear()
           ..addAll(items);
+        // Keep the display currency aligned with stored rates so restarts
+        // don't fall back to the 'EUR' default and crash expense totals.
+        if (items.isNotEmpty) {
+          currencyCode = items.first.pricePerKwh.currencyCode;
+        }
       });
     });
   }
