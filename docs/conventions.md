@@ -47,5 +47,10 @@ logs/              small structured per-agent-run audit reports (uploaded as CI 
 `code-build-artifacts.yml` is workflow-dispatch only. It builds from a resolved immutable commit
 after explicit confirmation of every selected platform, mode, and format, then uploads a retained
 manifest, checksums, logs, and real discovered outputs. It is not a release or publishing workflow;
-signed Android bundles, signed iOS IPAs, notarized macOS apps, and installers are unsupported until
-an approved ADR and configuration exist.
+release Android APKs are supported without signing secrets. Signed Android bundles, signed iOS IPAs,
+notarized macOS apps, and installers are unsupported until an approved ADR and configuration exist.
+
+`release.yml` is tag-triggered by `v*.*.*`. It builds release desktop bundles and a release Android
+APK, packages each binary, generates `SHA256SUMS`, and publishes the files as assets on the matching
+GitHub Release. GitHub Releases are the binary distribution surface; GitHub Pages is not used for
+binary storage.

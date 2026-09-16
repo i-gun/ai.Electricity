@@ -1,32 +1,153 @@
 name: release (Version Control Agent)
 
-# Triggered on SemVer tag push. Generates changelog + GitHub Release.
+# Builds release binaries from a SemVer tag and publishes them to its GitHub Release.
 # Never force-pushes or rewrites history; see agents/version-control-agent.yaml.
 
 on:
-  create:
+  push:
+    tags: ['v*.*.*']
 
 permissions:
   contents: write
 
 jobs:
-  release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+  build-release-assets:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            runner: windows-latest
+          - platform: macos
+            runner: macos-latest
+          - platform: linux
+            runner: ubuntu-latest
+          - platform: android
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.ref_name }}
           fetch-depth: 0
-      - name: Generate changelog from Conventional Commits
-        run: |
-          echo "Generate/prepend CHANGELOG.md entry for ${{ github.ref_name }} from git log since previous tag."
-      - name: Create GitHub Release
-        uses: actions/github-script@v7
+      - uses: subosito/flutter-action@v2
         with:
-          script: |
-            await github.rest.repos.createRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag_name: context.ref.replace('refs/tags/', ''),
-              generate_release_notes: true
-            });
+          channel: stable
+      - name: Install Linux desktop dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libstdc++-12-dev
+      - name: Enable desktop target
+        if: matrix.platform != 'android'
+        run: flutter config --enable-${{ matrix.platform }}-desktop
+      - name: Resolve workspace and generate sources
+        run: dart pub get
+      - name: Generate Drift sources
+        run: dart run build_runner build --delete-conflicting-outputs
+        working-directory: data
+      - name: Build release binary
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          case "$PLATFORM" in
+            windows)
+              cd apps/desktop
+              flutter build windows --release
+              cd ../..
+              ;;
+            macos)
+              cd apps/desktop
+              flutter build macos --release
+              cd ../..
+              ;;
+            linux)
+              cd apps/desktop
+              flutter build linux --release
+              cd ../..
+              ;;
+            android)
+              cd apps/mobile
+              flutter build apk --release
+              cd ../..
+              ;;
+            *)
+              echo "Unexpected platform: $PLATFORM"
+              exit 1
+              ;;
+          esac
+      - name: Package release binary
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          case "$PLATFORM" in
+            windows)
+              cd apps/desktop/build/windows/x64/runner/Release
+              zip -r "$OLDPWD/release-assets/ai-electricity-windows-$VERSION.zip" .
+              cd "$OLDPWD"
+              ;;
+            macos)
+              app_path=$(find apps/desktop/build/macos/Build/Products/Release -name '*.app' -type d | head -1)
+              if [ -z "$app_path" ]; then
+                echo "No macOS application bundle was produced."
+                exit 1
+              fi
+              cd "$(dirname "$app_path")"
+              zip -r "$OLDPWD/release-assets/ai-electricity-macos-$VERSION.zip" "$(basename "$app_path")"
+              cd "$OLDPWD"
+              ;;
+            linux)
+              tar -czf "release-assets/ai-electricity-linux-$VERSION.tar.gz" \
+                -C apps/desktop/build/linux/x64/release bundle
+              ;;
+            android)
+              cp apps/mobile/build/app/outputs/flutter-apk/app-release.apk \
+                "release-assets/ai-electricity-android-$VERSION.apk"
+              ;;
+            *)
+              echo "Unexpected platform: $PLATFORM"
+              exit 1
+              ;;
+          esac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-${{ matrix.platform }}-${{ github.run_id }}
+          path: release-assets
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-release:
+    needs: build-release-assets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-assets-*
+          path: release-assets
+          merge-multiple: true
+      - name: Generate checksums
+        working-directory: release-assets
+        env:
+          TAG: ${{ github.ref_name }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          sha256sum * > SHA256SUMS
+          jq -n --arg tag "$TAG" --arg commit "$COMMIT_SHA" \
+            --argjson assets "$(find . -maxdepth 1 -type f ! -name 'SHA256SUMS' -printf '%f\n' | jq -R -s 'split("\n") | map(select(length > 0))')" \
+            '{schema: "github-release-manifest/v1", tag: $tag, commit_sha: $commit, assets: $assets}' > manifest.json
+      - name: Create or update GitHub Release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-assets/* --clobber
+          else
+            gh release create "$TAG" release-assets/* --generate-notes --verify-tag
+          fi

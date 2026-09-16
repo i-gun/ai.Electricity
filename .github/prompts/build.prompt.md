@@ -16,7 +16,7 @@ Requested targets:
 - Windows desktop: Flutter Windows bundle
 - macOS desktop: Flutter macOS app bundle
 - Linux desktop: Flutter Linux bundle
-- Android: debug APK
+- Android: release APK
 - iOS simulator: unsigned simulator app
 
 Requested build modes:
@@ -33,7 +33,7 @@ Platform confirmation gate:
    windows-desktop: Flutter Windows bundle, debug
    macos-desktop: Flutter macOS app bundle, debug
    linux-desktop: Flutter Linux bundle, debug
-   android: debug APK, debug
+   android: release APK, release
    ios-simulator: unsigned simulator app, debug
 
 3. Do not infer confirmation from this request. If confirmation is absent, incomplete, changes any platform/mode/format, or the resolved SHA changes, stop without building and request renewed confirmation.
@@ -53,4 +53,4 @@ Constraints:
 - On validation or build defects, stop and hand off to Error Resolution Agent.
 - On unsupported platforms/formats, report the concrete limitation and route architectural requests to Advisory Agent.
 - Use idempotency key:
-  <commit-sha>:<normalized-platforms>:debug:<normalized-formats>
+   <commit-sha>:<normalized-platforms>:release:<normalized-formats>

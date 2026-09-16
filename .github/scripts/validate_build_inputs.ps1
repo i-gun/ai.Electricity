@@ -27,7 +27,7 @@ $normalizedPlatforms = @($selectedPlatforms | ForEach-Object { $_.ToLowerInvaria
 if (@($normalizedPlatforms | Sort-Object -Unique).Count -ne $normalizedPlatforms.Count) { throw 'Platforms must not contain duplicates.' }
 foreach ($platform in $normalizedPlatforms) {
     if ($allowedPlatforms -notcontains $platform) { throw "Unknown platform: $platform" }
-    if ($platform -eq 'android' -and $BuildMode -ne 'debug') { throw 'Android currently supports debug APK only.' }
+    if ($platform -eq 'android' -and $BuildMode -ne 'release') { throw 'Android release APKs require release build mode.' }
 }
 try { $formatMap = ConvertFrom-Json -InputObject $ArtifactFormats } catch { throw 'ArtifactFormats must be a JSON object.' }
 foreach ($platform in $normalizedPlatforms) {
