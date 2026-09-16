@@ -47,11 +47,11 @@ Previous confirmation never carries to a different SHA, mode, platform set, or f
 
 ## Platform Limits
 
-The supported verification matrix is Windows desktop, macOS desktop, Linux desktop, Android debug
+The supported verification matrix is Windows desktop, macOS desktop, Linux desktop, Android release
 APK, and iOS simulator without code signing. On Windows, iOS and macOS artifacts cannot be built
 locally; do not attempt them. Route unavailable work to the workflow on a compatible GitHub-hosted
 runner. Signed Android App Bundles, signed iOS IPAs, notarized macOS apps, installers, and release
-publishing are unsupported until an approved configuration and ADR/ticket exist.
+publishing remain outside this agent; the Version Control Agent publishes approved release assets.
 
 ## Required Gates
 

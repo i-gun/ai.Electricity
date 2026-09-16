@@ -34,6 +34,15 @@ logs/              small structured per-agent-run audit reports (uploaded as CI 
 - No business logic in `apps/*` — only platform adapters and UI composition.
 - Public APIs in `core/` require doc comments; internal helpers do not need restated comments.
 
+## Review Hygiene
+
+- Remote review checks treat trailing spaces and tabs as blocking diff errors, including in new
+  scripts and Markdown documents. Generated or edited files must contain no end-of-line whitespace.
+- During local testing, run `git diff --check` against the PR base and inspect the complete diff
+  before handoff. Do not rely on formatter, analyzer, or unit-test success to catch whitespace.
+- Preserve intentional content while removing formatting noise; Markdown hard-break spaces are not
+  permitted when they cause the remote whitespace gate to fail.
+
 ## Required PR checks
 
 - `review-agent/verdict`
@@ -47,5 +56,10 @@ logs/              small structured per-agent-run audit reports (uploaded as CI 
 `code-build-artifacts.yml` is workflow-dispatch only. It builds from a resolved immutable commit
 after explicit confirmation of every selected platform, mode, and format, then uploads a retained
 manifest, checksums, logs, and real discovered outputs. It is not a release or publishing workflow;
-signed Android bundles, signed iOS IPAs, notarized macOS apps, and installers are unsupported until
-an approved ADR and configuration exist.
+release Android APKs are supported without signing secrets. Signed Android bundles, signed iOS IPAs,
+notarized macOS apps, and installers are unsupported until an approved ADR and configuration exist.
+
+`release.yml` is tag-triggered by `v*.*.*`. It builds release desktop bundles and a release Android
+APK, packages each binary, generates `SHA256SUMS`, and publishes the files as assets on the matching
+GitHub Release. GitHub Releases are the binary distribution surface; GitHub Pages is not used for
+binary storage.

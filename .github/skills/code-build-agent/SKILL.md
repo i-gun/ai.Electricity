@@ -21,7 +21,7 @@ verification outputs but does not publish releases or create signed distribution
 | Windows desktop | `windows-latest` | Flutter Windows bundle | Windows desktop tooling |
 | macOS desktop | `macos-latest` | Flutter macOS app bundle | macOS/Xcode |
 | Linux desktop | `ubuntu-latest` | Flutter Linux bundle | Linux desktop tooling |
-| Android | `ubuntu-latest` | debug APK | Android SDK; no signing secret |
+| Android | `ubuntu-latest` | release APK | Android SDK; no signing secret |
 | iOS simulator | `macos-latest` | unsigned simulator app | macOS/Xcode simulator |
 
 Signed Android App Bundles, signed iOS IPAs, notarized macOS applications, installers, and
