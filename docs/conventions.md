@@ -34,6 +34,15 @@ logs/              small structured per-agent-run audit reports (uploaded as CI 
 - No business logic in `apps/*` — only platform adapters and UI composition.
 - Public APIs in `core/` require doc comments; internal helpers do not need restated comments.
 
+## Review Hygiene
+
+- Remote review checks treat trailing spaces and tabs as blocking diff errors, including in new
+  scripts and Markdown documents. Generated or edited files must contain no end-of-line whitespace.
+- During local testing, run `git diff --check` against the PR base and inspect the complete diff
+  before handoff. Do not rely on formatter, analyzer, or unit-test success to catch whitespace.
+- Preserve intentional content while removing formatting noise; Markdown hard-break spaces are not
+  permitted when they cause the remote whitespace gate to fail.
+
 ## Required PR checks
 
 - `review-agent/verdict`
