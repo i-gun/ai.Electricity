@@ -78,6 +78,25 @@ void main() {
     expect(find.text('Weekend'), findsOneWidget);
   });
 
+  testWidgets('tariff rate can be edited from the zones tab', (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: SharedHome()));
+    await tester.tap(find.text('Zones & tariffs'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Total'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Edit rate'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Price per kWh (EUR)'), '0.30');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('0.30 per kWh'), findsOneWidget);
+    expect(find.textContaining('0.25 per kWh'), findsNothing);
+  });
+
   testWidgets('stats renders side-by-side donuts split by zone',
       (tester) async {
     final zones = [
