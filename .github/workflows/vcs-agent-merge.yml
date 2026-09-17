@@ -40,6 +40,10 @@ jobs:
         if: steps.pr.outputs.number != ''
         run: |
           pr=${{ steps.pr.outputs.number }}
+          if [ "$(gh pr view "$pr" --json isDraft -q '.isDraft')" = "true" ]; then
+            echo "Not merging PR #$pr: still a draft."
+            exit 0
+          fi
           decision=$(gh pr view "$pr" --json reviewDecision -q '.reviewDecision')
           if [ "$decision" != "APPROVED" ]; then
             echo "Not merging PR #$pr: review-agent/verdict not approved (reviewDecision=$decision)."
