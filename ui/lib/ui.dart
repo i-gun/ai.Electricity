@@ -78,6 +78,11 @@ class _SharedHomeState extends State<SharedHome> {
         rates
           ..clear()
           ..addAll(items);
+        // Keep the display currency aligned with stored rates so restarts
+        // don't fall back to the 'EUR' default and crash expense totals.
+        if (items.isNotEmpty) {
+          currencyCode = items.first.pricePerKwh.currencyCode;
+        }
       });
     });
   }
@@ -101,6 +106,7 @@ class _SharedHomeState extends State<SharedHome> {
           onEditZone: _editZone,
           onDeleteZone: _deleteZone,
           onAddRate: _addRate,
+          onEditRate: _editRate,
           onDeleteRate: _deleteRate),
       StatsView(
           readings: readings,
@@ -337,6 +343,26 @@ class _SharedHomeState extends State<SharedHome> {
     await repository.save(rate);
   }
 
+  Future<void> _editRate(TariffRate rate) async {
+    final zone = _zoneFor(zones, rate.zoneId);
+    if (zone == null) return;
+    final updated = await showDialog<TariffRate>(
+        context: context,
+        builder: (_) =>
+            _RateDialog(zone: zone, currencyCode: currencyCode, initial: rate));
+    if (updated == null) return;
+    final projected = [
+      ...rates
+          .where((item) => item.id != rate.id && item.zoneId == rate.zoneId),
+      updated,
+    ];
+    if (RateValidator().overlaps(projected) is! Valid) {
+      _notify('That rate window overlaps an existing one.');
+      return;
+    }
+    await _saveRate(updated);
+  }
+
   Future<void> _deleteRate(TariffRate rate) async {
     final confirmed = await _confirm('Delete tariff rate?',
         '${_money(context, rate.pricePerKwh)} per kWh from ${_formatDate(context, rate.validFrom)} will be removed.');
@@ -352,7 +378,14 @@ class _SharedHomeState extends State<SharedHome> {
 
   Future<void> _saveRate(TariffRate rate) async {
     if (widget.rateRepository == null) {
-      setState(() => rates.add(rate));
+      setState(() {
+        final index = rates.indexWhere((item) => item.id == rate.id);
+        if (index >= 0) {
+          rates[index] = rate;
+        } else {
+          rates.add(rate);
+        }
+      });
     } else {
       await widget.rateRepository!.save(rate);
     }
@@ -360,15 +393,27 @@ class _SharedHomeState extends State<SharedHome> {
 
   void _notify(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    final messenger = ScaffoldMessenger.of(context);
+    // Clear any bar still showing so a new one doesn't queue behind it.
+    messenger.clearSnackBars();
+    messenger.showSnackBar(
+        SnackBar(content: Text(message), duration: const Duration(seconds: 4)));
   }
 
   void _notifyUndo(String message, Future<void> Function() undo) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+    final messenger = ScaffoldMessenger.of(context);
+    // Clear any bar still showing so a new one doesn't queue behind it.
+    messenger.clearSnackBars();
+    messenger.showSnackBar(SnackBar(
         content: Text(message),
-        action: SnackBarAction(label: 'Undo', onPressed: () => undo())));
+        duration: const Duration(seconds: 4),
+        action: SnackBarAction(
+            label: 'Undo',
+            onPressed: () {
+              messenger.hideCurrentSnackBar();
+              undo();
+            })));
   }
 
   Future<bool> _confirm(String title, String message) async {
@@ -492,6 +537,7 @@ class ZonesView extends StatelessWidget {
       required this.onEditZone,
       required this.onDeleteZone,
       required this.onAddRate,
+      required this.onEditRate,
       required this.onDeleteRate});
   final List<TariffZone> zones;
   final List<TariffRate> rates;
@@ -502,6 +548,7 @@ class ZonesView extends StatelessWidget {
   final ValueChanged<TariffZone> onEditZone;
   final ValueChanged<TariffZone> onDeleteZone;
   final ValueChanged<TariffZone> onAddRate;
+  final ValueChanged<TariffRate> onEditRate;
   final ValueChanged<TariffRate> onDeleteRate;
 
   @override
@@ -546,6 +593,7 @@ class ZonesView extends StatelessWidget {
                     onEdit: () => onEditZone(zone),
                     onDelete: () => onDeleteZone(zone),
                     onAddRate: () => onAddRate(zone),
+                    onEditRate: onEditRate,
                     onDeleteRate: onDeleteRate)),
         ]))
       ]));
@@ -559,6 +607,7 @@ class _ZoneTile extends StatelessWidget {
       required this.onEdit,
       required this.onDelete,
       required this.onAddRate,
+      required this.onEditRate,
       required this.onDeleteRate});
   final TariffZone zone;
   final List<TariffRate> rates;
@@ -566,6 +615,7 @@ class _ZoneTile extends StatelessWidget {
   final VoidCallback onEdit;
   final VoidCallback onDelete;
   final VoidCallback onAddRate;
+  final ValueChanged<TariffRate> onEditRate;
   final ValueChanged<TariffRate> onDeleteRate;
 
   @override
@@ -605,10 +655,16 @@ class _ZoneTile extends StatelessWidget {
               title: Text('${_money(context, rate.pricePerKwh)} per kWh'),
               subtitle: Text(
                   '${_formatDate(context, rate.validFrom)} → ${rate.validTo == null ? 'open' : _formatDate(context, rate.validTo!)}'),
-              trailing: IconButton(
-                  tooltip: 'Delete rate',
-                  icon: const Icon(Icons.delete_outline),
-                  onPressed: () => onDeleteRate(rate))),
+              trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                IconButton(
+                    tooltip: 'Edit rate',
+                    icon: const Icon(Icons.edit_outlined),
+                    onPressed: () => onEditRate(rate)),
+                IconButton(
+                    tooltip: 'Delete rate',
+                    icon: const Icon(Icons.delete_outline),
+                    onPressed: () => onDeleteRate(rate)),
+              ])),
         Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
             child: Align(
@@ -1497,9 +1553,11 @@ Future<String?> _promptCurrencyCode(
 }
 
 class _RateDialog extends StatefulWidget {
-  const _RateDialog({required this.zone, required this.currencyCode});
+  const _RateDialog(
+      {required this.zone, required this.currencyCode, this.initial});
   final TariffZone zone;
   final String currencyCode;
+  final TariffRate? initial;
   @override
   State<_RateDialog> createState() => _RateDialogState();
 }
@@ -1509,6 +1567,16 @@ class _RateDialogState extends State<_RateDialog> {
   DateTime validFrom = _dateOnly(DateTime.now());
   DateTime? validTo;
   String? error;
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.initial;
+    if (initial == null) return;
+    price.text = (initial.pricePerKwh.minorUnits / 100).toString();
+    validFrom = initial.validFrom;
+    validTo = initial.validTo;
+  }
 
   @override
   void dispose() {
@@ -1546,7 +1614,7 @@ class _RateDialogState extends State<_RateDialog> {
     Navigator.pop(
         context,
         TariffRate(
-            0,
+            widget.initial?.id ?? 0,
             widget.zone.code.value,
             Money.fromMajor(value, currencyCode: widget.currencyCode),
             validFrom,
@@ -1555,7 +1623,8 @@ class _RateDialogState extends State<_RateDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-        title: Text('Add ${widget.zone.name} tariff rate'),
+        title: Text(
+            '${widget.initial == null ? 'Add' : 'Edit'} ${widget.zone.name} tariff rate'),
         content: SizedBox(
           width: 360,
           child: Column(mainAxisSize: MainAxisSize.min, children: [

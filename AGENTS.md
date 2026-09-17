@@ -40,7 +40,7 @@ Every agent, on every run, must:
 | **Inputs** | Issue body (feature spec), `docs/architecture/*`, existing shared `core/` package, platform adapter conventions in `docs/conventions.md`. |
 | **Outputs** | New branch `feat/<issue-number>-<slug>`, source files + unit tests (baseline, expanded later by Testing Agent), draft PR (`draft: true`) linked to the issue, a generation report comment. |
 | **Skills/Tools** | Source scaffolding, spec-to-code generation, platform adapter generation (desktop shell vs. mobile shell against the shared `core/` business-logic layer), local lint/build runner. |
-| **Constraints** | Must never push to `main`/`release/*`. Must run local lint + build before opening the PR; if either fails, it self-corrects up to N attempts, then escalates. Must not mark the PR ready-for-review until its own checks pass. |
+| **Constraints** | Must never push to `main`/`release/*`. Must run local whitespace, lint, test, and build checks before opening the PR; `git diff --check` is required because remote review rejects trailing whitespace in generated and documentation files. If a check fails, it self-corrects up to N attempts, then escalates. Must not mark the PR ready-for-review until its own checks pass. |
 | **Escalation** | If spec is ambiguous or local build/lint cannot be made green after retries → comment on the issue with `status:blocked`, label `agent:advisory` (spec clarification) or `agent:error-resolution` (build failure), and stop. |
 
 ## 2. Code Review Agent

@@ -40,25 +40,39 @@ jobs:
           CONFIRMATION: ${{ inputs.confirmation }}
           PLATFORMS: ${{ inputs.platforms }}
           RUN_ID: ${{ github.run_id }}
-        shell: pwsh
+        shell: bash
         run: |
-          $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Force -Path 'logs/code-build-agent' | Out-Null
-          try {
-            if ($env:CONFIRMATION -cne 'confirmed') { throw 'Confirmation must be exactly confirmed.' }
-            try { $platforms = @((ConvertFrom-Json -InputObject $env:PLATFORMS) | ForEach-Object { $_ }) } catch { throw 'Platforms must be a JSON array.' }
-            $allowed = @('android', 'ios', 'linux', 'macos', 'windows')
-            if ($platforms.Count -eq 0 -or @($platforms | Where-Object { $_ -isnot [string] -or $allowed -notcontains $_.ToLowerInvariant() }).Count -gt 0) { throw 'Platforms must be a non-empty allow-listed JSON array.' }
-            if (@($platforms | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object -Unique).Count -ne $platforms.Count) { throw 'Platforms must not contain duplicates.' }
-            $status = 'completed'
-            $summary = 'Dispatch inputs passed pre-check.'
-          } catch {
-            $status = 'blocked'
-            $summary = $_.Exception.Message
-            $failure = $_.Exception.Message
+          set -euo pipefail
+          mkdir -p 'logs/code-build-agent'
+          if ! python3 .github/scripts/validate_build_inputs.py \
+            --platforms "$PLATFORMS" \
+            --artifact-formats "${{ inputs.artifact_formats }}" \
+            --build-mode "${{ inputs.build_mode }}" \
+            --confirmation "$CONFIRMATION" > /dev/null 2>&1; then
+            status='blocked'
+            summary='Dispatch inputs failed pre-check.'
+            failure='true'
+          else
+            status='completed'
+            summary='Dispatch inputs passed pre-check.'
+            failure=''
+          fi
+          python3 << 'EOF'
+          import json
+          from datetime import datetime, timezone
+          report = {
+              'agent': 'code-build-agent',
+              'runId': '${{ github.run_id }}',
+              'taskId': '${{ github.run_id }}',
+              'timestamp': datetime.now(timezone.utc).isoformat(),
+              'status': '$status',
+              'summary': '$summary',
+              'confidence': 1.0
           }
-          @{ agent = 'code-build-agent'; runId = $env:RUN_ID; taskId = $env:RUN_ID; timestamp = [DateTime]::UtcNow.ToString('o'); status = $status; summary = $summary; confidence = 1.0 } | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8 -Path "logs/code-build-agent/$($env:RUN_ID).json"
-          if ($failure) { throw $failure }
+          with open('logs/code-build-agent/${{ github.run_id }}.json', 'w') as f:
+              json.dump(report, f, indent=2)
+          EOF
+          if [ -n "$failure" ]; then exit 1; fi
       - name: Upload preflight report
         if: always()
         uses: actions/upload-artifact@v4
@@ -98,16 +112,23 @@ jobs:
           fi
       - name: Normalize and validate selected matrix
         id: normalize
-        shell: pwsh
+        shell: bash
         env:
           PLATFORMS: ${{ inputs.platforms }}
           FORMATS: ${{ inputs.artifact_formats }}
           BUILD_MODE: ${{ inputs.build_mode }}
           CONFIRMATION: ${{ inputs.confirmation }}
         run: |
-          $result = & .github/scripts/validate_build_inputs.ps1 -Platforms $env:PLATFORMS -ArtifactFormats $env:FORMATS -BuildMode $env:BUILD_MODE -Confirmation $env:CONFIRMATION | ConvertFrom-Json
-          "matrix=$($result.matrix | ConvertTo-Json -Compress)" >> $env:GITHUB_OUTPUT
-          "build_mode=$($result.build_mode)" >> $env:GITHUB_OUTPUT
+          set -euo pipefail
+          result=$(python3 .github/scripts/validate_build_inputs.py \
+            --platforms "$PLATFORMS" \
+            --artifact-formats "$FORMATS" \
+            --build-mode "$BUILD_MODE" \
+            --confirmation "$CONFIRMATION")
+          matrix=$(echo "$result" | python3 -c "import sys, json; data=json.load(sys.stdin); print(json.dumps(data['matrix'], separators=(',', ':')))")
+          build_mode=$(echo "$result" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data['build_mode'])")
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "build_mode=$build_mode" >> "$GITHUB_OUTPUT"
 
   quality:
     needs: prepare
@@ -191,43 +212,101 @@ jobs:
       - name: Resolve workspace and generate sources
         run: |
           dart pub get
-        
+
       - name: Generate Drift sources
         working-directory: data
         run: dart run build_runner build --delete-conflicting-outputs
       - name: Build confirmed target
-        shell: pwsh
+        shell: bash
         env:
           PLATFORM: ${{ matrix.platform }}
           MODE: ${{ needs.prepare.outputs.build_mode }}
         run: |
-          $ErrorActionPreference = 'Stop'
-          $mode = "--$env:MODE"
-          switch ($env:PLATFORM) {
-            'windows' { Push-Location apps/desktop; flutter build windows $mode; Pop-Location }
-            'macos' { Push-Location apps/desktop; flutter build macos $mode; Pop-Location }
-            'linux' { Push-Location apps/desktop; flutter build linux $mode; Pop-Location }
-            'android' { Push-Location apps/mobile; flutter build apk --debug; Pop-Location }
-            'ios' { Push-Location apps/mobile; flutter build ios --simulator --no-codesign $mode; Pop-Location }
-            default { throw "Unexpected platform: $env:PLATFORM" }
-          }
+          set -euo pipefail
+          mode_flag="--$MODE"
+          case "$PLATFORM" in
+            windows)
+              cd apps/desktop
+              flutter build windows $mode_flag
+              cd ../..
+              ;;
+            macos)
+              cd apps/desktop
+              flutter build macos $mode_flag
+              cd ../..
+              ;;
+            linux)
+              cd apps/desktop
+              flutter build linux $mode_flag
+              cd ../..
+              ;;
+            android)
+              cd apps/mobile
+              flutter build apk --release
+              cd ../..
+              ;;
+            ios)
+              cd apps/mobile
+              flutter build ios --simulator --no-codesign $mode_flag
+              cd ../..
+              ;;
+            *)
+              echo "Unexpected platform: $PLATFORM"
+              exit 1
+              ;;
+          esac
       - name: Collect real output
-        shell: pwsh
-        run: .github/scripts/collect_build_artifacts.ps1 -Platform '${{ matrix.platform }}' -BuildMode '${{ needs.prepare.outputs.build_mode }}' -Format '${{ matrix.format }}' -Workspace $PWD -StagingDirectory (Join-Path $PWD 'artifact-staging')
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/collect_build_artifacts.py \
+            --platform '${{ matrix.platform }}' \
+            --build-mode '${{ needs.prepare.outputs.build_mode }}' \
+            --format '${{ matrix.format }}' \
+            --workspace "$PWD" \
+            --staging-directory "$PWD/artifact-staging"
       - name: Generate manifest and checksums
-        shell: pwsh
-        env:
-          FLUTTER_VERSION: ${{ '' }}
+        shell: bash
         run: |
-          $flutterVersion = (flutter --version | Select-Object -First 1)
-          $dartVersion = (dart --version 2>&1 | Select-Object -First 1)
-          .github/scripts/write_build_manifest.ps1 -StagingDirectory (Join-Path $PWD 'artifact-staging') -OutputDirectory (Join-Path $PWD 'artifact-staging/report') -SourceRef '${{ inputs.ref }}' -CommitSha '${{ needs.prepare.outputs.sha }}' -RunId '${{ github.run_id }}' -RunnerOS '${{ runner.os }}' -FlutterVersion $flutterVersion -DartVersion $dartVersion
+          set -euo pipefail
+          flutter_version=$(flutter --version | head -1)
+          dart_version=$(dart --version 2>&1 | head -1)
+          python3 .github/scripts/write_build_manifest.py \
+            --staging-directory "$PWD/artifact-staging" \
+            --output-directory "$PWD/artifact-staging/report" \
+            --source-ref '${{ inputs.ref }}' \
+            --commit-sha '${{ needs.prepare.outputs.sha }}' \
+            --run-id '${{ github.run_id }}' \
+            --runner-os '${{ runner.os }}' \
+            --flutter-version "$flutter_version" \
+            --dart-version "$dart_version"
       - name: Write structured report
-        shell: pwsh
+        shell: bash
         run: |
-          $reportDir = 'artifact-staging/report/logs/code-build-agent'
-          New-Item -ItemType Directory -Force -Path $reportDir | Out-Null
-          @{ agent = 'code-build-agent'; runId = '${{ github.run_id }}-${{ matrix.platform }}'; taskId = '${{ github.run_id }}'; timestamp = [DateTime]::UtcNow.ToString('o'); status = 'completed'; summary = 'Built confirmed artifact from pinned commit.'; confidence = 1.0; artifacts = @(@{ kind = 'artifact-manifest'; ref = 'manifest.json' }, @{ kind = 'checksum'; ref = 'SHA256SUMS' }, @{ kind = 'actions-artifact'; ref = 'code-build-${{ matrix.platform }}-${{ needs.prepare.outputs.build_mode }}-${{ needs.prepare.outputs.sha }}' }, @{ kind = 'log'; ref = 'logs/code-build-agent/${{ github.run_id }}-${{ matrix.platform }}.json' }) } | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8 -Path (Join-Path $reportDir "${{ github.run_id }}-${{ matrix.platform }}.json")
+          set -euo pipefail
+          report_dir='artifact-staging/report/logs/code-build-agent'
+          mkdir -p "$report_dir"
+          python3 << 'EOF'
+          import json
+          from datetime import datetime, timezone
+          report = {
+              'agent': 'code-build-agent',
+              'runId': '${{ github.run_id }}-${{ matrix.platform }}',
+              'taskId': '${{ github.run_id }}',
+              'timestamp': datetime.now(timezone.utc).isoformat(),
+              'status': 'completed',
+              'summary': 'Built confirmed artifact from pinned commit.',
+              'confidence': 1.0,
+              'artifacts': [
+                  {'kind': 'artifact-manifest', 'ref': 'manifest.json'},
+                  {'kind': 'checksum', 'ref': 'SHA256SUMS'},
+                  {'kind': 'actions-artifact', 'ref': 'code-build-${{ matrix.platform }}-${{ needs.prepare.outputs.build_mode }}-${{ needs.prepare.outputs.sha }}'},
+                  {'kind': 'log', 'ref': 'logs/code-build-agent/${{ github.run_id }}-${{ matrix.platform }}.json'}
+              ]
+          }
+          with open('$report_dir/${{ github.run_id }}-${{ matrix.platform }}.json', 'w') as f:
+              json.dump(report, f, indent=2)
+          EOF
       - uses: actions/upload-artifact@v4
         with:
           name: code-build-${{ matrix.platform }}-${{ needs.prepare.outputs.build_mode }}-${{ needs.prepare.outputs.sha }}

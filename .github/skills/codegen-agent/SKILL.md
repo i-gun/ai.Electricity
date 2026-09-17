@@ -19,7 +19,9 @@ Human-invocable agent: `.github/agents/codegen-agent.agent.md`.
 2. Read `docs/conventions.md` and `docs/architecture/*` before editing.
 3. Keep business logic in `core/`; keep desktop/mobile differences in thin app adapters.
 4. Create or update baseline unit tests with the implementation.
-5. Run lint and build checks before handoff.
+5. Run local validation before handoff: `git diff --check` against the PR base, `dart format`,
+   `flutter analyze`, relevant tests, and build checks. Treat any whitespace finding as a blocking
+   defect and inspect the full diff after formatting or generated-file changes.
 6. Produce a draft PR and a report matching `schemas/agent-report.schema.json`.
 
 ## Escalation

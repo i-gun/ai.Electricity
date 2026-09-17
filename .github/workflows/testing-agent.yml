@@ -1,0 +1,124 @@
+name: testing-agent
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  testing:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out pull request
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Resolve workspace
+        run: dart pub get
+
+      - name: Generate Drift sources
+        working-directory: data
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      - name: Run package and shell tests
+        id: tests
+        shell: bash
+        run: |
+          set +e
+          failures=()
+
+          run_test() {
+            local label="$1"
+            shift
+            echo "::group::$label"
+            "$@"
+            local result=$?
+            echo "::endgroup::"
+            if (( result != 0 )); then
+              failures+=("$label")
+            fi
+          }
+
+          run_test "core tests" bash -c 'cd core && dart test'
+          run_test "data tests" bash -c 'cd data && flutter test'
+          run_test "ui tests" bash -c 'cd ui && flutter test'
+          run_test "desktop shell tests" bash -c 'cd apps/desktop && flutter test test/widget_test.dart'
+          run_test "mobile shell tests" bash -c 'cd apps/mobile && flutter test test/widget_test.dart'
+
+          if (( ${#failures[@]} == 0 )); then
+            verdict=success
+            summary="All package and desktop/mobile shell tests passed."
+          else
+            verdict=failure
+            summary="Failing test groups: ${failures[*]}"
+          fi
+
+          {
+            echo "verdict=$verdict"
+            echo "summary<<TEST_SUMMARY"
+            echo "$summary"
+            echo "TEST_SUMMARY"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish testing gate check
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          VERDICT: ${{ steps.tests.outputs.verdict || 'failure' }}
+          SUMMARY: ${{ steps.tests.outputs.summary || 'Testing workflow did not produce a verdict.' }}
+        with:
+          script: |
+            const conclusion = process.env.VERDICT === 'success' ? 'success' : 'failure';
+            const check = await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'testing-agent/gate',
+              head_sha: context.payload.pull_request.head.sha,
+              status: 'completed',
+              conclusion,
+              output: {
+                title: conclusion === 'success' ? 'Testing gate passed' : 'Testing gate failed',
+                summary: process.env.SUMMARY,
+              },
+            });
+
+            const marker = '<!-- testing-agent/gate -->';
+            const body = `${marker}\n**testing-agent/gate:** ${conclusion}\n\n${process.env.SUMMARY}`;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+            const existing = comments.find((comment) =>
+              comment.user.type === 'Bot' && comment.body.startsWith(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body,
+              });
+            }
+
+            core.setOutput('check-run-id', check.data.id);
+
+      - name: Fail testing gate when tests fail
+        if: steps.tests.outputs.verdict != 'success'
+        run: exit 1

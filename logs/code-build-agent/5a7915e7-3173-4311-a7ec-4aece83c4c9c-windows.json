@@ -1,0 +1,27 @@
+{
+    "agent":  "code-build-agent",
+    "runId":  "5a7915e7-3173-4311-a7ec-4aece83c4c9c-windows",
+    "taskId":  "5a7915e7-3173-4311-a7ec-4aece83c4c9c",
+    "timestamp":  "2026-09-17T16:27:04.1211785Z",
+    "status":  "completed",
+    "summary":  "Built confirmed artifact from pinned commit.",
+    "confidence":  1,
+    "artifacts":  [
+                      {
+                          "kind":  "artifact-manifest",
+                          "ref":  "C:\\Users\\IgorGunia\\Desktop\\dev\\ai.Electricity\\build\\code-build-agent\\5a7915e7-3173-4311-a7ec-4aece83c4c9c\\artifact-staging\\report\\manifest.json"
+                      },
+                      {
+                          "kind":  "checksum",
+                          "ref":  "C:\\Users\\IgorGunia\\Desktop\\dev\\ai.Electricity\\build\\code-build-agent\\5a7915e7-3173-4311-a7ec-4aece83c4c9c\\artifact-staging\\report\\SHA256SUMS"
+                      },
+                      {
+                          "kind":  "file",
+                          "ref":  "C:\\Users\\IgorGunia\\Desktop\\dev\\ai.Electricity\\build\\code-build-agent\\5a7915e7-3173-4311-a7ec-4aece83c4c9c\\artifact-staging"
+                      },
+                      {
+                          "kind":  "log",
+                          "ref":  "C:\\Users\\IgorGunia\\Desktop\\dev\\ai.Electricity\\logs\\code-build-agent\\5a7915e7-3173-4311-a7ec-4aece83c4c9c-windows.json"
+                      }
+                  ]
+}
