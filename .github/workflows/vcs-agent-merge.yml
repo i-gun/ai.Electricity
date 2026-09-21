@@ -53,4 +53,4 @@ jobs:
             echo "Not merging PR #$pr: required checks (incl. testing-agent/gate) are not all green yet."
             exit 0
           fi
-          gh pr merge "$pr" --squash --delete-branch
+          gh pr merge "$pr" --squash --delete-branch --auto
