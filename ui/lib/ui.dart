@@ -755,10 +755,11 @@ class StatsView extends StatelessWidget {
                         DateRange(picked.start, picked.end), 'custom');
                   }
                 } else {
-                  onRangeChanged(
-                      DateRange.lastMonths(
-                          int.parse(value.substring(0, value.length - 1))),
-                      value);
+                  final amount =
+                      int.parse(value.substring(0, value.length - 1));
+                  final unit = value.substring(value.length - 1);
+                  final months = unit == 'Y' ? amount * 12 : amount;
+                  onRangeChanged(DateRange.lastMonths(months), value);
                 }
               }
             },
