@@ -46,6 +46,44 @@ void main() {
     expect(find.textContaining('photo checked'), findsOneWidget);
   });
 
+  testWidgets('readings are split into newest-first zone tables',
+      (tester) async {
+    final zones = [
+      TariffZone(1, ZoneCode('day'), 'Day', ZoneKind.day,
+          colorArgb: 0xfff4b400, sortOrder: 1),
+      TariffZone(2, ZoneCode('night'), 'Night', ZoneKind.night,
+          colorArgb: 0xff4285f4, sortOrder: 2),
+    ];
+    final readings = [
+      MeterReading(1, 'day', DateTime(2026, 3, 1), Kwh(100), note: 'older day'),
+      MeterReading(2, 'night', DateTime(2026, 3, 2), Kwh(40),
+          note: 'older night'),
+      MeterReading(3, 'day', DateTime(2026, 3, 5), Kwh(125),
+          note: 'latest day'),
+      MeterReading(4, 'night', DateTime(2026, 3, 6), Kwh(55),
+          note: 'latest night'),
+    ];
+
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: ReadingsView(
+                readings: readings,
+                zones: zones,
+                onAdd: () {},
+                onEdit: (_) {},
+                onDelete: (_) {}))));
+
+    expect(find.text('Day'), findsOneWidget);
+    expect(find.text('Night'), findsOneWidget);
+    expect(find.byType(DataTable), findsNWidgets(2));
+    expect(tester.getTopLeft(find.text('latest day')).dy,
+        lessThan(tester.getTopLeft(find.text('older day')).dy));
+    expect(tester.getTopLeft(find.text('latest night')).dy,
+        lessThan(tester.getTopLeft(find.text('older night')).dy));
+    expect(tester.getTopLeft(find.text('Day')).dx,
+        lessThan(tester.getTopLeft(find.text('Night')).dx));
+  });
+
   testWidgets('day zone can be activated from the zones tab', (tester) async {
     await tester.pumpWidget(const MaterialApp(home: SharedHome()));
     await tester.tap(find.text('Zones & tariffs'));
