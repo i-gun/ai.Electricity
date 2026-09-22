@@ -459,63 +459,141 @@ class ReadingsView extends StatelessWidget {
   final ValueChanged<MeterReading> onEdit;
   final ValueChanged<MeterReading> onDelete;
   @override
-  Widget build(BuildContext context) => Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Wrap(alignment: WrapAlignment.spaceBetween, runSpacing: 12, children: [
-          Text('Meter readings',
-              style: Theme.of(context).textTheme.headlineSmall),
-          FilledButton.icon(
-              onPressed: onAdd,
-              icon: const Icon(Icons.add),
-              label: const Text('Add reading'))
-        ]),
-        const SizedBox(height: 16),
-        Expanded(
-            child: readings.isEmpty
-                ? const _EmptyState(
-                    icon: Icons.speed_outlined,
-                    title: 'No readings yet',
-                    message:
-                        'Add the first cumulative meter value to start tracking.')
-                : Card(
-                    child: ListView.separated(
-                        itemCount: readings.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
-                        itemBuilder: (_, i) {
-                          final r = readings[i];
-                          final zone = _zoneFor(zones, r.zoneId);
-                          final note = r.note;
-                          return ListTile(
-                              leading: CircleAvatar(
-                                  backgroundColor:
-                                      Color(zone?.colorArgb ?? 0xff008577),
-                                  child: Icon(
-                                      r.isReset
-                                          ? Icons.restart_alt
-                                          : Icons.electric_meter_outlined,
-                                      color: Colors.white,
-                                      size: 20)),
-                              title: Text(
-                                  '${r.valueKwh.value.toStringAsFixed(3)} kWh'),
-                              subtitle: Text([
-                                _formatDate(context, r.readingDate),
-                                zone?.name ?? r.zoneId,
-                                if (note != null && note.isNotEmpty) note,
-                                if (r.isReset) 'meter reset',
-                              ].join(' • ')),
-                              trailing: Wrap(children: [
-                                IconButton(
-                                    tooltip: 'Edit reading',
-                                    icon: const Icon(Icons.edit_outlined),
-                                    onPressed: () => onEdit(r)),
-                                IconButton(
-                                    tooltip: 'Delete reading',
-                                    icon: const Icon(Icons.delete_outline),
-                                    onPressed: () => onDelete(r))
-                              ]));
-                        }))),
-      ]));
+  Widget build(BuildContext context) {
+    final groupedReadings = _readingsByZone(readings);
+    final readingZones = _readingZones(zones, groupedReadings.keys);
+    return Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              runSpacing: 12,
+              children: [
+                Text('Meter readings',
+                    style: Theme.of(context).textTheme.headlineSmall),
+                FilledButton.icon(
+                    onPressed: onAdd,
+                    icon: const Icon(Icons.add),
+                    label: const Text('Add reading'))
+              ]),
+          const SizedBox(height: 16),
+          Expanded(
+              child: readings.isEmpty
+                  ? const _EmptyState(
+                      icon: Icons.speed_outlined,
+                      title: 'No readings yet',
+                      message:
+                          'Add the first cumulative meter value to start tracking.')
+                  : SingleChildScrollView(
+                      child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                for (final zone in readingZones) ...[
+                                  _ReadingZoneTable(
+                                      zoneName: zone.name,
+                                      zoneColor: Color(zone.colorArgb),
+                                      readings:
+                                          groupedReadings[zone.code.value]!,
+                                      onEdit: onEdit,
+                                      onDelete: onDelete),
+                                  if (zone != readingZones.last)
+                                    const SizedBox(width: 16),
+                                ]
+                              ]))))
+        ]));
+  }
+}
+
+Map<String, List<MeterReading>> _readingsByZone(List<MeterReading> readings) {
+  final grouped = <String, List<MeterReading>>{};
+  for (final reading in readings) {
+    grouped.putIfAbsent(reading.zoneId, () => []).add(reading);
+  }
+  for (final zoneReadings in grouped.values) {
+    zoneReadings.sort((a, b) => b.readingDate.compareTo(a.readingDate));
+  }
+  return grouped;
+}
+
+List<TariffZone> _readingZones(
+    List<TariffZone> zones, Iterable<String> zoneIds) {
+  final zoneIdSet = zoneIds.toSet();
+  final knownZones = zones
+      .where((zone) => zoneIdSet.contains(zone.code.value))
+      .toList()
+    ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+  final knownZoneIds = knownZones.map((zone) => zone.code.value).toSet();
+  return [
+    ...knownZones,
+    for (final zoneId in zoneIdSet.where((id) => !knownZoneIds.contains(id)))
+      TariffZone(0, ZoneCode(zoneId), zoneId, ZoneKind.custom),
+  ];
+}
+
+class _ReadingZoneTable extends StatelessWidget {
+  const _ReadingZoneTable(
+      {required this.zoneName,
+      required this.zoneColor,
+      required this.readings,
+      required this.onEdit,
+      required this.onDelete});
+
+  final String zoneName;
+  final Color zoneColor;
+  final List<MeterReading> readings;
+  final ValueChanged<MeterReading> onEdit;
+  final ValueChanged<MeterReading> onDelete;
+
+  @override
+  Widget build(BuildContext context) => ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 360),
+      child: Card(
+          child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(mainAxisSize: MainAxisSize.min, children: [
+                      CircleAvatar(backgroundColor: zoneColor, radius: 6),
+                      const SizedBox(width: 8),
+                      Text(zoneName,
+                          style: Theme.of(context).textTheme.titleMedium),
+                    ]),
+                    const SizedBox(height: 8),
+                    DataTable(columns: const [
+                      DataColumn(label: Text('Date')),
+                      DataColumn(label: Text('Reading')),
+                      DataColumn(label: Text('Label')),
+                      DataColumn(label: Text('Actions')),
+                    ], rows: [
+                      for (final reading in readings)
+                        DataRow(cells: [
+                          DataCell(
+                              Text(_formatDate(context, reading.readingDate))),
+                          DataCell(Text(
+                              '${reading.valueKwh.value.toStringAsFixed(3)} kWh')),
+                          DataCell(Text([
+                            if (reading.note != null &&
+                                reading.note!.isNotEmpty)
+                              reading.note!,
+                            if (reading.isReset) 'meter reset',
+                          ].join(' • '))),
+                          DataCell(Wrap(children: [
+                            IconButton(
+                                tooltip: 'Edit reading',
+                                icon: const Icon(Icons.edit_outlined),
+                                onPressed: () => onEdit(reading)),
+                            IconButton(
+                                tooltip: 'Delete reading',
+                                icon: const Icon(Icons.delete_outline),
+                                onPressed: () => onDelete(reading)),
+                          ])),
+                        ]),
+                    ]),
+                  ]))));
 }
 
 TariffZone? _zoneFor(List<TariffZone> zones, String zoneId) {
