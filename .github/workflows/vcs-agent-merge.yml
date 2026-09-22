@@ -40,6 +40,10 @@ jobs:
         if: steps.pr.outputs.number != ''
         run: |
           pr=${{ steps.pr.outputs.number }}
+          if [ "$(gh pr view "$pr" --json isDraft -q '.isDraft')" = "true" ]; then
+            echo "Not merging PR #$pr: still a draft."
+            exit 0
+          fi
           decision=$(gh pr view "$pr" --json reviewDecision -q '.reviewDecision')
           if [ "$decision" != "APPROVED" ]; then
             echo "Not merging PR #$pr: review-agent/verdict not approved (reviewDecision=$decision)."
@@ -49,4 +53,4 @@ jobs:
             echo "Not merging PR #$pr: required checks (incl. testing-agent/gate) are not all green yet."
             exit 0
           fi
-          gh pr merge "$pr" --squash --delete-branch
+          gh pr merge "$pr" --squash --delete-branch --auto
