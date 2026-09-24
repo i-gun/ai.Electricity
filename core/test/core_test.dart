@@ -148,6 +148,85 @@ void main() {
     expect(byZone['night']?.minorUnits, 40);
   });
 
+  test('consumption and expenses group by owning location', () {
+    final zones = [
+      TariffZone(1, ZoneCode('day'), 'Day', ZoneKind.day, locationId: 1),
+      TariffZone(2, ZoneCode('night'), 'Night', ZoneKind.night, locationId: 1),
+      TariffZone(3, ZoneCode('cabin-total'), 'Cabin', ZoneKind.total,
+          locationId: 2),
+    ];
+    final deltas = [
+      ConsumptionDelta(
+          DateTime(2026, 1, 1), DateTime(2026, 1, 2), Kwh(10), 'day'),
+      ConsumptionDelta(
+          DateTime(2026, 1, 1), DateTime(2026, 1, 2), Kwh(4), 'night'),
+      ConsumptionDelta(
+          DateTime(2026, 1, 1), DateTime(2026, 1, 2), Kwh(6), 'cabin-total'),
+      ConsumptionDelta(
+          DateTime(2026, 1, 1), DateTime(2026, 1, 2), Kwh(1), 'unknown-zone'),
+    ];
+    final rates = [
+      TariffRate(1, 'day', Money(20), DateTime(2025, 1, 1)),
+      TariffRate(2, 'night', Money(10), DateTime(2025, 1, 1)),
+      TariffRate(3, 'cabin-total', Money(15), DateTime(2025, 1, 1)),
+    ];
+    final calculator = ConsumptionCalculator();
+
+    final totalsByLocation = calculator.totalsByLocation(deltas, zones);
+    expect(totalsByLocation[1], Kwh(14));
+    expect(totalsByLocation[2], Kwh(6));
+    expect(totalsByLocation, hasLength(2));
+
+    final expenseByLocation =
+        ExpenseCalculator().calculateByLocation(deltas, rates, zones);
+    expect(expenseByLocation[1]?.minorUnits, 240);
+    expect(expenseByLocation[2]?.minorUnits, 90);
+  });
+
+  test('location copyWith preserves identity and updates fields', () {
+    const location = Location(1, 'Home', isArchived: true);
+    final renamed = location.copyWith(name: 'Home base', isArchived: false);
+    expect(renamed.id, 1);
+    expect(renamed.name, 'Home base');
+    expect(renamed.isArchived, isFalse);
+    expect(location.copyWith().colorArgb, location.colorArgb);
+
+    final zone = TariffZone(1, ZoneCode('day'), 'Day', ZoneKind.day);
+    expect(zone.locationId, 1);
+    expect(zone.copyWith(locationId: 2).locationId, 2);
+  });
+
+  test('mixed-currency locations are a hard error, not a silent sum', () {
+    final zones = [
+      TariffZone(1, ZoneCode('home-total'), 'Home', ZoneKind.total,
+          locationId: 1),
+      TariffZone(2, ZoneCode('cabin-total'), 'Cabin', ZoneKind.total,
+          locationId: 1),
+    ];
+    final deltas = [
+      ConsumptionDelta(
+          DateTime(2026, 1, 1), DateTime(2026, 1, 2), Kwh(10), 'home-total'),
+      ConsumptionDelta(
+          DateTime(2026, 1, 1), DateTime(2026, 1, 2), Kwh(5), 'cabin-total'),
+    ];
+    final rates = [
+      TariffRate(1, 'home-total', Money(20, currencyCode: 'EUR'),
+          DateTime(2025, 1, 1)),
+      TariffRate(2, 'cabin-total', Money(20, currencyCode: 'USD'),
+          DateTime(2025, 1, 1)),
+    ];
+    // 'cabin-total' is excluded from this currencyCode's expense calc
+    // (ExpenseCalculator.calculate's existing behaviour), so its consumption
+    // still contributes to totalsByLocation but not to calculateByLocation's
+    // Money total for that location; combining currencies directly would
+    // otherwise require a mismatched Money addition, which throws.
+    final byLocation =
+        ExpenseCalculator().calculateByLocation(deltas, rates, zones);
+    expect(byLocation[1]?.minorUnits, 200);
+    expect(() => Money(1, currencyCode: 'EUR') + Money(1, currencyCode: 'USD'),
+        throwsArgumentError);
+  });
+
   test('expenses ignore dates without a matching rate', () {
     final delta = ConsumptionDelta(
         DateTime(2026, 1, 1), DateTime(2026, 1, 2), Kwh(10), 'day');

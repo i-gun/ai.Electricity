@@ -173,4 +173,90 @@ void main() {
     // Day and night replace the aggregate slice so nothing is double-counted.
     expect(find.text('Total'), findsNothing);
   });
+
+  testWidgets('single-location install has no visible location scope switch',
+      (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: SharedHome()));
+    await tester.tap(find.text('Stats'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Per zone'), findsNothing);
+    expect(find.text('Combined (all locations)'), findsNothing);
+  });
+
+  testWidgets('locations tab creates a location and blocks delete with zones',
+      (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: SharedHome()));
+    await tester.tap(find.text('Locations'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Home'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'New location'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Location name'), 'Cabin');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Cabin'), findsOneWidget);
+
+    await tester
+        .tap(find.widgetWithIcon(IconButton, Icons.delete_outline).first);
+    await tester.pumpAndSettle();
+
+    // 'Home' owns the seeded zones, so deletion is blocked immediately by a
+    // snack bar rather than opening a confirmation dialog.
+    expect(find.text('Home'), findsOneWidget);
+    expect(find.textContaining('archive it instead'), findsOneWidget);
+  });
+
+  testWidgets(
+      'combined scope switch appears with two locations and renders location donuts',
+      (tester) async {
+    final locations = [
+      const Location(1, 'Home', colorArgb: 0xff008577),
+      const Location(2, 'Cabin', colorArgb: 0xffdb4437),
+    ];
+    final zones = [
+      TariffZone(1, ZoneCode('home-total'), 'Home total', ZoneKind.total,
+          locationId: 1),
+      TariffZone(2, ZoneCode('cabin-total'), 'Cabin total', ZoneKind.total,
+          locationId: 2),
+    ];
+    final readings = [
+      MeterReading(1, 'home-total', DateTime(2026, 3, 1), Kwh(100)),
+      MeterReading(2, 'home-total', DateTime(2026, 3, 10), Kwh(130)),
+      MeterReading(3, 'cabin-total', DateTime(2026, 3, 1), Kwh(20)),
+      MeterReading(4, 'cabin-total', DateTime(2026, 3, 10), Kwh(35)),
+    ];
+    final rates = [
+      TariffRate(1, 'home-total', Money(20), DateTime(2025, 1, 1)),
+      TariffRate(2, 'cabin-total', Money(20), DateTime(2025, 1, 1)),
+    ];
+
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: StatsView(
+                readings: readings,
+                rates: rates,
+                zones: zones,
+                locations: locations,
+                range: DateRange(DateTime(2026, 1, 1), DateTime(2026, 12, 31)),
+                rangeKey: 'custom',
+                currencyCode: 'EUR',
+                onRangeChanged: (_, __) {}))));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Per zone'), findsOneWidget);
+    expect(find.text('Combined (all locations)'), findsOneWidget);
+
+    await tester.tap(find.text('Combined (all locations)'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Consumption by location'), findsOneWidget);
+    expect(find.text('Expenses by location'), findsOneWidget);
+    expect(find.text('Home'), findsWidgets);
+    expect(find.text('Cabin'), findsWidgets);
+  });
 }

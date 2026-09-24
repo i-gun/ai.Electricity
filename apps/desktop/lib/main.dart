@@ -8,7 +8,8 @@ void main() {
   runApp(DesktopApp(
       readingRepository: DriftMeterReadingRepository(database),
       zoneRepository: DriftTariffZoneRepository(database),
-      rateRepository: DriftTariffRateRepository(database)));
+      rateRepository: DriftTariffRateRepository(database),
+      locationRepository: DriftLocationRepository(database)));
 }
 
 class DesktopApp extends StatelessWidget {
@@ -16,10 +17,12 @@ class DesktopApp extends StatelessWidget {
       {super.key,
       this.readingRepository,
       this.zoneRepository,
-      this.rateRepository});
+      this.rateRepository,
+      this.locationRepository});
   final MeterReadingRepository? readingRepository;
   final TariffZoneRepository? zoneRepository;
   final TariffRateRepository? rateRepository;
+  final LocationRepository? locationRepository;
 
   @override
   Widget build(BuildContext context) {
@@ -30,7 +33,8 @@ class DesktopApp extends StatelessWidget {
       home: SharedHome(
           readingRepository: readingRepository,
           zoneRepository: zoneRepository,
-          rateRepository: rateRepository),
+          rateRepository: rateRepository,
+          locationRepository: locationRepository),
     );
   }
 }

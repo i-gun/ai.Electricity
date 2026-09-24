@@ -9,8 +9,20 @@ void main() {
     final database = ElectricityDatabase(NativeDatabase.memory());
     addTearDown(database.close);
 
-    expect(database.schemaVersion, 1);
+    expect(database.schemaVersion, 2);
     expect(await database.select(database.tariffZones).get(), hasLength(3));
+    final seededLocations = await database.select(database.locations).get();
+    expect(seededLocations, hasLength(1));
+    expect(seededLocations.single.name, 'Home');
+  });
+
+  test('every seeded zone backfills to the default Home location', () async {
+    final database = ElectricityDatabase(NativeDatabase.memory());
+    addTearDown(database.close);
+
+    final home = (await database.select(database.locations).get()).single;
+    final zones = await database.select(database.tariffZones).get();
+    expect(zones.map((zone) => zone.locationId), everyElement(home.id));
   });
 
   test('reading repository round-trips through Drift', () async {
@@ -97,5 +109,46 @@ void main() {
 
     await repository.delete(all.first.id);
     expect(await repository.watchAll().first, hasLength(1));
+  });
+
+  test('location repository creates, archives, and deletes locations',
+      () async {
+    final database = ElectricityDatabase(NativeDatabase.memory());
+    addTearDown(database.close);
+    final repository = DriftLocationRepository(database);
+
+    expect(await repository.watchAll().first, hasLength(1));
+
+    await repository.save(const domain.Location(0, 'Cabin', sortOrder: 1));
+    final active = await repository.watchAll().first;
+    expect(active.map((location) => location.name), contains('Cabin'));
+
+    final cabin = active.firstWhere((location) => location.name == 'Cabin');
+    await repository.save(cabin.copyWith(isArchived: true));
+    expect(await repository.watchAll().first, hasLength(1));
+    expect(
+        await repository.watchAll(includeArchived: true).first, hasLength(2));
+
+    await repository.delete(cabin.id);
+    expect(
+        await repository.watchAll(includeArchived: true).first, hasLength(1));
+  });
+
+  test('zone repository persists and round-trips locationId', () async {
+    final database = ElectricityDatabase(NativeDatabase.memory());
+    addTearDown(database.close);
+    final locationRepository = DriftLocationRepository(database);
+    final zoneRepository = DriftTariffZoneRepository(database);
+    await locationRepository
+        .save(const domain.Location(0, 'Cabin', sortOrder: 1));
+    final cabin = (await locationRepository.watchAll().first)
+        .firstWhere((location) => location.name == 'Cabin');
+
+    await zoneRepository.save(domain.TariffZone(
+        0, domain.ZoneCode('cabin-total'), 'Cabin total', domain.ZoneKind.total,
+        locationId: cabin.id));
+    final saved = (await zoneRepository.watchAll().first)
+        .firstWhere((zone) => zone.code.value == 'cabin-total');
+    expect(saved.locationId, cabin.id);
   });
 }

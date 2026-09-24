@@ -90,11 +90,34 @@ class DateRange {
 
 enum ZoneKind { total, day, night, custom }
 
-class TariffZone {
-  const TariffZone(this.id, this.code, this.name, this.kind,
+/// A physical property/meter that owns one or more [TariffZone]s (ADR 0006).
+class Location {
+  const Location(this.id, this.name,
       {this.colorArgb = 0xff008577,
       this.sortOrder = 0,
       this.isArchived = false});
+  final int id;
+  final String name;
+  final int colorArgb;
+  final int sortOrder;
+  final bool isArchived;
+
+  Location copyWith(
+          {String? name, int? colorArgb, int? sortOrder, bool? isArchived}) =>
+      Location(id, name ?? this.name,
+          colorArgb: colorArgb ?? this.colorArgb,
+          sortOrder: sortOrder ?? this.sortOrder,
+          isArchived: isArchived ?? this.isArchived);
+}
+
+class TariffZone {
+  // locationId defaults to 1 (the default "Home" location seeded by the
+  // schemaVersion-2 migration) so pre-ADR-0006 call sites keep working.
+  const TariffZone(this.id, this.code, this.name, this.kind,
+      {this.colorArgb = 0xff008577,
+      this.sortOrder = 0,
+      this.isArchived = false,
+      this.locationId = 1});
   final int id;
   final ZoneCode code;
   final String name;
@@ -102,13 +125,19 @@ class TariffZone {
   final int colorArgb;
   final int sortOrder;
   final bool isArchived;
+  final int locationId;
 
   TariffZone copyWith(
-          {String? name, int? colorArgb, int? sortOrder, bool? isArchived}) =>
+          {String? name,
+          int? colorArgb,
+          int? sortOrder,
+          bool? isArchived,
+          int? locationId}) =>
       TariffZone(id, code, name ?? this.name, kind,
           colorArgb: colorArgb ?? this.colorArgb,
           sortOrder: sortOrder ?? this.sortOrder,
-          isArchived: isArchived ?? this.isArchived);
+          isArchived: isArchived ?? this.isArchived,
+          locationId: locationId ?? this.locationId);
 }
 
 class TariffRate {
@@ -177,6 +206,12 @@ abstract interface class TariffRateRepository {
   Future<void> delete(int id);
 }
 
+abstract interface class LocationRepository {
+  Stream<List<Location>> watchAll({bool includeArchived = false});
+  Future<void> save(Location location);
+  Future<void> delete(int id);
+}
+
 class ConsumptionDelta {
   const ConsumptionDelta(this.from, this.to, this.consumption, this.zoneId);
   final DateTime from;
@@ -224,6 +259,22 @@ class ConsumptionCalculator {
     for (final delta in deltas) {
       totals[delta.zoneId] =
           (totals[delta.zoneId] ?? Kwh(0)) + delta.consumption;
+    }
+    return totals;
+  }
+
+  /// Sums every zone's consumption into its owning location; zones with no
+  /// matching entry in [zones] (an unknown/removed zone code) are skipped.
+  Map<int, Kwh> totalsByLocation(
+      Iterable<ConsumptionDelta> deltas, Iterable<TariffZone> zones) {
+    final locationOf = {
+      for (final zone in zones) zone.code.value: zone.locationId
+    };
+    final totals = <int, Kwh>{};
+    for (final entry in totalsByZone(deltas).entries) {
+      final locationId = locationOf[entry.key];
+      if (locationId == null) continue;
+      totals[locationId] = (totals[locationId] ?? Kwh(0)) + entry.value;
     }
     return totals;
   }
@@ -302,6 +353,27 @@ class ExpenseCalculator {
       for (final entry in grouped.entries)
         entry.key: calculate(entry.value, rates, currencyCode: currencyCode),
     };
+  }
+
+  /// Sums each zone's expense into its owning location. `Money.+` already
+  /// throws on a currency mismatch, so mixed-currency locations surface as a
+  /// hard error rather than a silently wrong total (ADR 0006 Decision 5).
+  Map<int, Money> calculateByLocation(Iterable<ConsumptionDelta> deltas,
+      Iterable<TariffRate> rates, Iterable<TariffZone> zones,
+      {String currencyCode = 'EUR'}) {
+    final locationOf = {
+      for (final zone in zones) zone.code.value: zone.locationId
+    };
+    final totals = <int, Money>{};
+    for (final entry
+        in calculateByZone(deltas, rates, currencyCode: currencyCode).entries) {
+      final locationId = locationOf[entry.key];
+      if (locationId == null) continue;
+      totals[locationId] =
+          (totals[locationId] ?? Money(0, currencyCode: currencyCode)) +
+              entry.value;
+    }
+    return totals;
   }
 }
 

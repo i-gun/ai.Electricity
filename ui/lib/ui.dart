@@ -19,11 +19,13 @@ class SharedHome extends StatefulWidget {
       this.compact = false,
       this.readingRepository,
       this.zoneRepository,
-      this.rateRepository});
+      this.rateRepository,
+      this.locationRepository});
   final bool compact;
   final MeterReadingRepository? readingRepository;
   final TariffZoneRepository? zoneRepository;
   final TariffRateRepository? rateRepository;
+  final LocationRepository? locationRepository;
   @override
   State<SharedHome> createState() => _SharedHomeState();
 }
@@ -38,10 +40,14 @@ List<TariffZone> _seedZones() => [
           colorArgb: 0xff4285f4, sortOrder: 2, isArchived: true),
     ];
 
+/// Mirrors the schemaVersion-2 seed migration in `data/`.
+List<Location> _seedLocations() => [const Location(1, 'Home')];
+
 class _SharedHomeState extends State<SharedHome> {
   int tab = 0;
   final readings = <MeterReading>[];
   final zones = _seedZones();
+  final locations = _seedLocations();
   final rates = <TariffRate>[
     TariffRate(1, 'total', Money(25), DateTime(2000, 1, 1)),
   ];
@@ -85,6 +91,14 @@ class _SharedHomeState extends State<SharedHome> {
         }
       });
     });
+    widget.locationRepository?.watchAll(includeArchived: true).listen((items) {
+      if (!mounted) return;
+      setState(() {
+        locations
+          ..clear()
+          ..addAll(items);
+      });
+    });
   }
 
   @override
@@ -112,13 +126,21 @@ class _SharedHomeState extends State<SharedHome> {
           readings: readings,
           rates: rates,
           zones: zones,
+          locations: locations,
           range: range,
           rangeKey: rangeKey,
           currencyCode: currencyCode,
           onRangeChanged: (r, key) => setState(() {
                 range = r;
                 rangeKey = key;
-              }))
+              })),
+      LocationsView(
+          locations: locations,
+          zones: zones,
+          onToggleLocation: _toggleLocation,
+          onAddLocation: _addLocation,
+          onEditLocation: _editLocation,
+          onDeleteLocation: _deleteLocation),
     ];
     return Scaffold(
         appBar: AppBar(title: const Text('ai.Electricity')),
@@ -138,7 +160,10 @@ class _SharedHomeState extends State<SharedHome> {
                           label: Text('Zones & tariffs')),
                       NavigationRailDestination(
                           icon: Icon(Icons.insights_outlined),
-                          label: Text('Stats'))
+                          label: Text('Stats')),
+                      NavigationRailDestination(
+                          icon: Icon(Icons.home_work_outlined),
+                          label: Text('Locations'))
                     ]),
                 const VerticalDivider(width: 1),
                 Expanded(child: pages[tab])
@@ -153,7 +178,10 @@ class _SharedHomeState extends State<SharedHome> {
                     NavigationDestination(
                         icon: Icon(Icons.tune), label: 'Zones'),
                     NavigationDestination(
-                        icon: Icon(Icons.insights_outlined), label: 'Stats')
+                        icon: Icon(Icons.insights_outlined), label: 'Stats'),
+                    NavigationDestination(
+                        icon: Icon(Icons.home_work_outlined),
+                        label: 'Locations')
                   ])
             : null,
         floatingActionButton: widget.compact && tab == 0
@@ -232,19 +260,23 @@ class _SharedHomeState extends State<SharedHome> {
 
   Future<void> _addZone() async {
     final zone = await showDialog<TariffZone>(
-        context: context, builder: (_) => _ZoneDialog(existing: zones));
+        context: context,
+        builder: (_) => _ZoneDialog(existing: zones, locations: locations));
     if (zone == null) return;
     await _saveZone(widget.zoneRepository == null
         ? TariffZone(_nextId(zones.map((item) => item.id)), zone.code,
             zone.name, zone.kind,
-            colorArgb: zone.colorArgb, sortOrder: zone.sortOrder)
+            colorArgb: zone.colorArgb,
+            sortOrder: zone.sortOrder,
+            locationId: zone.locationId)
         : zone);
   }
 
   Future<void> _editZone(TariffZone zone) async {
     final updated = await showDialog<TariffZone>(
         context: context,
-        builder: (_) => _ZoneDialog(existing: zones, initial: zone));
+        builder: (_) =>
+            _ZoneDialog(existing: zones, locations: locations, initial: zone));
     if (updated == null) return;
     await _saveZone(updated);
   }
@@ -301,6 +333,59 @@ class _SharedHomeState extends State<SharedHome> {
         }
       }
     });
+  }
+
+  Future<void> _toggleLocation(Location location) =>
+      _saveLocation(location.copyWith(isArchived: !location.isArchived));
+
+  Future<void> _addLocation() async {
+    final location = await showDialog<Location>(
+        context: context, builder: (_) => const _LocationDialog());
+    if (location == null) return;
+    await _saveLocation(widget.locationRepository == null
+        ? Location(_nextId(locations.map((item) => item.id)), location.name,
+            colorArgb: location.colorArgb, sortOrder: location.sortOrder)
+        : location);
+  }
+
+  Future<void> _editLocation(Location location) async {
+    final updated = await showDialog<Location>(
+        context: context, builder: (_) => _LocationDialog(initial: location));
+    if (updated == null) return;
+    await _saveLocation(updated);
+  }
+
+  Future<void> _saveLocation(Location location) async {
+    final repository = widget.locationRepository;
+    if (repository == null) {
+      setState(() {
+        final index = locations.indexWhere((item) => item.id == location.id);
+        if (index >= 0) {
+          locations[index] = location;
+        } else {
+          locations.add(location);
+        }
+      });
+      return;
+    }
+    await repository.save(location);
+  }
+
+  Future<void> _deleteLocation(Location location) async {
+    if (zones.any((zone) => zone.locationId == location.id)) {
+      _notify('${location.name} still has zones — archive it instead.');
+      return;
+    }
+    final confirmed = await _confirm(
+        'Delete ${location.name}?', 'The location will be removed.');
+    if (!confirmed) return;
+    final repository = widget.locationRepository;
+    if (repository == null) {
+      setState(() => locations.remove(location));
+    } else {
+      await repository.delete(location.id);
+    }
+    _notifyUndo('Location deleted', () => _saveLocation(location));
   }
 
   Future<void> _addRate(TariffZone zone) async {
@@ -756,12 +841,85 @@ class _ZoneTile extends StatelessWidget {
   }
 }
 
-class StatsView extends StatelessWidget {
+class LocationsView extends StatelessWidget {
+  const LocationsView(
+      {super.key,
+      required this.locations,
+      required this.zones,
+      required this.onToggleLocation,
+      required this.onAddLocation,
+      required this.onEditLocation,
+      required this.onDeleteLocation});
+  final List<Location> locations;
+  final List<TariffZone> zones;
+  final ValueChanged<Location> onToggleLocation;
+  final VoidCallback onAddLocation;
+  final ValueChanged<Location> onEditLocation;
+  final ValueChanged<Location> onDeleteLocation;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            runSpacing: 12,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text('Locations',
+                  style: Theme.of(context).textTheme.headlineSmall),
+              FilledButton.icon(
+                  onPressed: onAddLocation,
+                  icon: const Icon(Icons.add),
+                  label: const Text('New location'))
+            ]),
+        const SizedBox(height: 8),
+        Text(
+            'Track more than one property/meter; each owns its own zones and tariffs.',
+            style: Theme.of(context).textTheme.bodySmall),
+        const SizedBox(height: 16),
+        Expanded(
+            child: ListView(children: [
+          for (final location in locations)
+            Card(
+                margin: const EdgeInsets.only(bottom: 12),
+                child: ListTile(
+                    leading: CircleAvatar(
+                        backgroundColor: Color(location.colorArgb),
+                        child: Text(
+                            location.name.isEmpty
+                                ? '?'
+                                : location.name[0].toUpperCase(),
+                            style: const TextStyle(color: Colors.white))),
+                    title: Text(location.name),
+                    subtitle: Text(
+                        '${location.isArchived ? 'Archived' : 'Active'} • ${zones.where((zone) => zone.locationId == location.id).length} zone(s)'),
+                    trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Semantics(
+                          label: '${location.name} active',
+                          child: Switch(
+                              value: !location.isArchived,
+                              onChanged: (_) => onToggleLocation(location))),
+                      IconButton(
+                          tooltip: 'Edit location',
+                          icon: const Icon(Icons.edit_outlined),
+                          onPressed: () => onEditLocation(location)),
+                      IconButton(
+                          tooltip: 'Delete location',
+                          icon: const Icon(Icons.delete_outline),
+                          onPressed: () => onDeleteLocation(location)),
+                    ]))),
+        ]))
+      ]));
+}
+
+class StatsView extends StatefulWidget {
   const StatsView(
       {super.key,
       required this.readings,
       required this.rates,
       required this.zones,
+      this.locations = const [],
       required this.range,
       required this.rangeKey,
       required this.currencyCode,
@@ -769,12 +927,28 @@ class StatsView extends StatelessWidget {
   final List<MeterReading> readings;
   final List<TariffRate> rates;
   final List<TariffZone> zones;
+  final List<Location> locations;
   final DateRange range;
   final String rangeKey;
   final String currencyCode;
   final void Function(DateRange range, String key) onRangeChanged;
   @override
+  State<StatsView> createState() => _StatsViewState();
+}
+
+class _StatsViewState extends State<StatsView> {
+  bool combined = false;
+
+  @override
   Widget build(BuildContext context) {
+    final readings = widget.readings;
+    final rates = widget.rates;
+    final zones = widget.zones;
+    final locations = widget.locations;
+    final range = widget.range;
+    final rangeKey = widget.rangeKey;
+    final currencyCode = widget.currencyCode;
+    final onRangeChanged = widget.onRangeChanged;
     final calculator = ConsumptionCalculator();
     final consumption = calculator
         .deltas(readings)
@@ -804,6 +978,18 @@ class StatsView extends StatelessWidget {
     final dayShare = dayNightTotal == 0 ? 0 : dayKwh / dayNightTotal;
     final chartZones = _chartZones(zones, consumptionByZone.keys);
     final warning = _reconcile(zones, consumptionByZone);
+    final activeLocations = locations.where((l) => !l.isArchived).toList()
+      ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+    // The scope switch only appears once a second location exists, so a
+    // single-location install keeps today's Stats tab visually unchanged.
+    final showLocationScope = locations.length > 1;
+    final showCombined = showLocationScope && combined;
+    final excludedLocations = showCombined
+        ? activeLocations
+            .where((location) =>
+                !_locationHasCurrency(location.id, zones, rates, currencyCode))
+            .toList()
+        : const <Location>[];
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -843,6 +1029,20 @@ class StatsView extends StatelessWidget {
             },
           ),
         ]),
+        if (showLocationScope) ...[
+          const SizedBox(height: 12),
+          SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(value: false, label: Text('Per zone')),
+                ButtonSegment(
+                    value: true, label: Text('Combined (all locations)')),
+              ],
+              selected: {
+                combined
+              },
+              onSelectionChanged: (selection) =>
+                  setState(() => combined = selection.first)),
+        ],
         const SizedBox(height: 16),
         Wrap(spacing: 12, children: [
           _SummaryTile(
@@ -881,7 +1081,96 @@ class StatsView extends StatelessWidget {
               icon: Icons.bar_chart,
               title: 'Charts will appear here',
               message: 'Add at least two readings to calculate consumption.')
-        else ...[
+        else if (showCombined) ...[
+          LayoutBuilder(builder: (context, constraints) {
+            final consumptionDonut = _LocationDonut(
+                title: 'Consumption by location',
+                semanticsLabel: 'Consumption by location donut chart',
+                locations: activeLocations,
+                valueOf: (location) =>
+                    _locationConsumption(location.id, zones, consumptionByZone)
+                        .value,
+                labelOf: (location) =>
+                    '${_locationConsumption(location.id, zones, consumptionByZone).value.toStringAsFixed(1)} kWh');
+            final expenseDonut = _LocationDonut(
+                title: 'Expenses by location',
+                semanticsLabel: 'Expenses by location donut chart',
+                locations: activeLocations
+                    .where((location) => !excludedLocations.contains(location))
+                    .toList(),
+                valueOf: (location) => _locationExpense(
+                        location.id, zones, expenseByZone, currencyCode)
+                    .minorUnits
+                    .toDouble(),
+                labelOf: (location) => _money(
+                    context,
+                    _locationExpense(
+                        location.id, zones, expenseByZone, currencyCode)));
+            if (constraints.maxWidth < 600) {
+              return Column(children: [consumptionDonut, expenseDonut]);
+            }
+            return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Expanded(child: consumptionDonut),
+              const SizedBox(width: 16),
+              Expanded(child: expenseDonut),
+            ]);
+          }),
+          if (excludedLocations.isNotEmpty)
+            Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Text(
+                    '${excludedLocations.map((location) => location.name).join(', ')} '
+                    '${excludedLocations.length == 1 ? 'uses' : 'use'} a different currency and '
+                    '${excludedLocations.length == 1 ? 'is' : 'are'} excluded from the expense chart.',
+                    style: Theme.of(context).textTheme.bodySmall)),
+          _ChartPanel(
+              title: 'Consumption by period, by location',
+              child: SizedBox(
+                  height: 240,
+                  child: Semantics(
+                      label: 'Consumption by location stacked bar chart',
+                      child: BarChart(BarChartData(
+                          titlesData: FlTitlesData(
+                              topTitles: const AxisTitles(
+                                  sideTitles: SideTitles(showTitles: false)),
+                              rightTitles: const AxisTitles(
+                                  sideTitles: SideTitles(showTitles: false)),
+                              leftTitles: const AxisTitles(
+                                  sideTitles: SideTitles(
+                                      showTitles: true, reservedSize: 40)),
+                              bottomTitles: AxisTitles(
+                                  sideTitles: SideTitles(
+                                      showTitles: true,
+                                      reservedSize: 32,
+                                      getTitlesWidget: (value, meta) {
+                                        final index = value.round();
+                                        if (index < 0 ||
+                                            index >= buckets.length) {
+                                          return const SizedBox.shrink();
+                                        }
+                                        return Padding(
+                                            padding:
+                                                const EdgeInsets.only(top: 8),
+                                            child: Text(
+                                                _bucketLabel(
+                                                    context,
+                                                    buckets[index].start,
+                                                    granularity),
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .labelSmall));
+                                      }))),
+                          barGroups: [
+                            for (var i = 0; i < buckets.length; i++)
+                              BarChartGroupData(x: i, barRods: [
+                                BarChartRodData(
+                                    toY: buckets[i].total.value,
+                                    rodStackItems: _locationStackItems(
+                                        buckets[i], zones, activeLocations),
+                                    width: 18)
+                              ]),
+                          ]))))),
+        ] else ...[
           LayoutBuilder(builder: (context, constraints) {
             final consumptionDonut = _ZoneDonut(
                 title: 'Consumption by zone',
@@ -1046,6 +1335,76 @@ List<BarChartRodStackItem> _stackItems(
   ];
 }
 
+/// A location's consumption is its component zones (day/night, ...) when they
+/// have data, falling back to its total zone otherwise — the same
+/// double-counting guard `_chartZones` applies within a single location.
+Kwh _locationConsumption(int locationId, List<TariffZone> zones,
+    Map<String, Kwh> consumptionByZone) {
+  final locationZones =
+      zones.where((zone) => zone.locationId == locationId).toList();
+  final selected = _chartZones(locationZones, consumptionByZone.keys);
+  return selected.fold(Kwh(0),
+      (sum, zone) => sum + (consumptionByZone[zone.code.value] ?? Kwh(0)));
+}
+
+Money _locationExpense(int locationId, List<TariffZone> zones,
+    Map<String, Money> expenseByZone, String currencyCode) {
+  final locationZones =
+      zones.where((zone) => zone.locationId == locationId).toList();
+  final selected = _chartZones(locationZones, expenseByZone.keys);
+  return selected.fold(
+      Money(0, currencyCode: currencyCode),
+      (sum, zone) =>
+          sum +
+          (expenseByZone[zone.code.value] ??
+              Money(0, currencyCode: currencyCode)));
+}
+
+/// True if any tariff rate for this location's zones is priced in
+/// [currencyCode]; otherwise the location has nothing to contribute to the
+/// combined expense chart and must be excluded rather than silently zeroed.
+bool _locationHasCurrency(int locationId, List<TariffZone> zones,
+    List<TariffRate> rates, String currencyCode) {
+  final zoneCodes = zones
+      .where((zone) => zone.locationId == locationId)
+      .map((zone) => zone.code.value)
+      .toSet();
+  return rates.any((rate) =>
+      zoneCodes.contains(rate.zoneId) &&
+      rate.pricePerKwh.currencyCode == currencyCode);
+}
+
+Map<int, Kwh> _sumByLocation(Map<String, Kwh> byZone, List<TariffZone> zones) {
+  final locationOf = {
+    for (final zone in zones) zone.code.value: zone.locationId
+  };
+  final result = <int, Kwh>{};
+  for (final entry in byZone.entries) {
+    final locationId = locationOf[entry.key];
+    if (locationId == null) continue;
+    result[locationId] = (result[locationId] ?? Kwh(0)) + entry.value;
+  }
+  return result;
+}
+
+List<BarChartRodStackItem> _locationStackItems(ConsumptionBucket bucket,
+    List<TariffZone> zones, List<Location> locations) {
+  var from = 0.0;
+  return [
+    for (final entry in _sumByLocation(bucket.byZone, zones).entries)
+      if (entry.value.value > 0)
+        BarChartRodStackItem(from, from += entry.value.value,
+            Color(_locationFor(locations, entry.key)?.colorArgb ?? 0xff008577)),
+  ];
+}
+
+Location? _locationFor(List<Location> locations, int id) {
+  for (final location in locations) {
+    if (location.id == id) return location;
+  }
+  return null;
+}
+
 ReconciliationWarning? _reconcile(
     List<TariffZone> zones, Map<String, Kwh> consumptionByZone) {
   Kwh? total;
@@ -1145,6 +1504,70 @@ class _ZoneDonut extends StatelessWidget {
                   const SizedBox(width: 8),
                   Expanded(child: Text(zone.name)),
                   Text(labelOf(zone),
+                      style: Theme.of(context).textTheme.labelLarge),
+                ])),
+        ]));
+  }
+}
+
+class _LocationDonut extends StatelessWidget {
+  const _LocationDonut(
+      {required this.title,
+      required this.semanticsLabel,
+      required this.locations,
+      required this.valueOf,
+      required this.labelOf});
+  final String title;
+  final String semanticsLabel;
+  final List<Location> locations;
+  final double Function(Location) valueOf;
+  final String Function(Location) labelOf;
+
+  @override
+  Widget build(BuildContext context) {
+    final slices =
+        locations.where((location) => valueOf(location) > 0).toList();
+    final sum =
+        slices.fold(0.0, (total, location) => total + valueOf(location));
+    return _ChartPanel(
+        title: title,
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          SizedBox(
+              height: 200,
+              child: Semantics(
+                  label: semanticsLabel,
+                  child: slices.isEmpty
+                      ? const Center(child: Text('No data in this range'))
+                      : PieChart(PieChartData(
+                          centerSpaceRadius: 48,
+                          sectionsSpace: 2,
+                          sections: [
+                              for (final location in slices)
+                                PieChartSectionData(
+                                    value: valueOf(location),
+                                    radius: 44,
+                                    color: Color(location.colorArgb),
+                                    title:
+                                        '${(valueOf(location) / sum * 100).round()}%',
+                                    titleStyle: const TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.white)),
+                            ])))),
+          const SizedBox(height: 12),
+          for (final location in slices)
+            Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Row(children: [
+                  Container(
+                      width: 12,
+                      height: 12,
+                      decoration: BoxDecoration(
+                          color: Color(location.colorArgb),
+                          shape: BoxShape.circle)),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(location.name)),
+                  Text(labelOf(location),
                       style: Theme.of(context).textTheme.labelLarge),
                 ])),
         ]));
@@ -1442,8 +1865,10 @@ const _zonePalette = <int>[
 ];
 
 class _ZoneDialog extends StatefulWidget {
-  const _ZoneDialog({required this.existing, this.initial});
+  const _ZoneDialog(
+      {required this.existing, this.locations = const [], this.initial});
   final List<TariffZone> existing;
+  final List<Location> locations;
   final TariffZone? initial;
   @override
   State<_ZoneDialog> createState() => _ZoneDialogState();
@@ -1452,6 +1877,7 @@ class _ZoneDialog extends StatefulWidget {
 class _ZoneDialogState extends State<_ZoneDialog> {
   late final TextEditingController name;
   late int colorArgb;
+  late int locationId;
   String? error;
 
   @override
@@ -1460,6 +1886,10 @@ class _ZoneDialogState extends State<_ZoneDialog> {
     name = TextEditingController(text: widget.initial?.name ?? '');
     colorArgb = widget.initial?.colorArgb ??
         _zonePalette[widget.existing.length % _zonePalette.length];
+    final activeLocations =
+        widget.locations.where((location) => !location.isArchived).toList();
+    locationId = widget.initial?.locationId ??
+        (activeLocations.isEmpty ? 1 : activeLocations.first.id);
   }
 
   @override
@@ -1477,7 +1907,9 @@ class _ZoneDialogState extends State<_ZoneDialog> {
     final initial = widget.initial;
     if (initial != null) {
       Navigator.pop(
-          context, initial.copyWith(name: label, colorArgb: colorArgb));
+          context,
+          initial.copyWith(
+              name: label, colorArgb: colorArgb, locationId: locationId));
       return;
     }
     final slug = label
@@ -1495,7 +1927,9 @@ class _ZoneDialogState extends State<_ZoneDialog> {
     Navigator.pop(
         context,
         TariffZone(0, ZoneCode(slug), label, ZoneKind.custom,
-            colorArgb: colorArgb, sortOrder: widget.existing.length));
+            colorArgb: colorArgb,
+            sortOrder: widget.existing.length,
+            locationId: locationId));
   }
 
   @override
@@ -1509,6 +1943,112 @@ class _ZoneDialogState extends State<_ZoneDialog> {
                 autofocus: true,
                 textCapitalization: TextCapitalization.words,
                 decoration: const InputDecoration(labelText: 'Zone name')),
+            // Only shown once a second location exists, so a single-location
+            // install keeps today's dialog layout unchanged.
+            if (widget.locations.length > 1) ...[
+              const SizedBox(height: 16),
+              InputDecorator(
+                  decoration: const InputDecoration(labelText: 'Location'),
+                  child: DropdownButtonHideUnderline(
+                      child: DropdownButton<int>(
+                          isExpanded: true,
+                          value: locationId,
+                          items: [
+                            for (final location in widget.locations)
+                              DropdownMenuItem(
+                                  value: location.id,
+                                  child: Text(location.name))
+                          ],
+                          onChanged: (selected) => setState(
+                              () => locationId = selected ?? locationId)))),
+            ],
+            const SizedBox(height: 16),
+            Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Colour',
+                    style: Theme.of(context).textTheme.bodySmall)),
+            const SizedBox(height: 8),
+            Wrap(spacing: 8, children: [
+              for (final swatch in _zonePalette)
+                IconButton(
+                    tooltip: 'Select colour',
+                    onPressed: () => setState(() => colorArgb = swatch),
+                    icon: CircleAvatar(
+                        backgroundColor: Color(swatch),
+                        child: colorArgb == swatch
+                            ? const Icon(Icons.check,
+                                size: 18, color: Colors.white)
+                            : null)),
+            ]),
+            if (error != null)
+              Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(error!,
+                          style: TextStyle(
+                              color: Theme.of(context).colorScheme.error)))),
+          ]),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel')),
+          FilledButton(onPressed: _save, child: const Text('Save')),
+        ],
+      );
+}
+
+class _LocationDialog extends StatefulWidget {
+  const _LocationDialog({this.initial});
+  final Location? initial;
+  @override
+  State<_LocationDialog> createState() => _LocationDialogState();
+}
+
+class _LocationDialogState extends State<_LocationDialog> {
+  late final TextEditingController name;
+  late int colorArgb;
+  String? error;
+
+  @override
+  void initState() {
+    super.initState();
+    name = TextEditingController(text: widget.initial?.name ?? '');
+    colorArgb = widget.initial?.colorArgb ?? _zonePalette[0];
+  }
+
+  @override
+  void dispose() {
+    name.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final label = name.text.trim();
+    if (label.isEmpty) {
+      setState(() => error = 'Enter a location name.');
+      return;
+    }
+    final initial = widget.initial;
+    Navigator.pop(
+        context,
+        initial == null
+            ? Location(0, label, colorArgb: colorArgb)
+            : initial.copyWith(name: label, colorArgb: colorArgb));
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: Text(widget.initial == null ? 'New location' : 'Edit location'),
+        content: SizedBox(
+          width: 360,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(
+                controller: name,
+                autofocus: true,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(labelText: 'Location name')),
             const SizedBox(height: 16),
             Align(
                 alignment: Alignment.centerLeft,

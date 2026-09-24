@@ -8,7 +8,8 @@ void main() {
   runApp(MobileApp(
       readingRepository: DriftMeterReadingRepository(database),
       zoneRepository: DriftTariffZoneRepository(database),
-      rateRepository: DriftTariffRateRepository(database)));
+      rateRepository: DriftTariffRateRepository(database),
+      locationRepository: DriftLocationRepository(database)));
 }
 
 class MobileApp extends StatelessWidget {
@@ -16,10 +17,12 @@ class MobileApp extends StatelessWidget {
       {super.key,
       this.readingRepository,
       this.zoneRepository,
-      this.rateRepository});
+      this.rateRepository,
+      this.locationRepository});
   final MeterReadingRepository? readingRepository;
   final TariffZoneRepository? zoneRepository;
   final TariffRateRepository? rateRepository;
+  final LocationRepository? locationRepository;
 
   @override
   Widget build(BuildContext context) {
@@ -31,7 +34,8 @@ class MobileApp extends StatelessWidget {
           compact: true,
           readingRepository: readingRepository,
           zoneRepository: zoneRepository,
-          rateRepository: rateRepository),
+          rateRepository: rateRepository,
+          locationRepository: locationRepository),
     );
   }
 }

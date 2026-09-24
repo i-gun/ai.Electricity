@@ -12,8 +12,19 @@ ElectricityDatabase openElectricityDatabase() =>
 /// Ids <= 0 mean "new row": let SQLite assign one instead of overwriting.
 Value<int> _idValue(int id) => id > 0 ? Value(id) : const Value.absent();
 
+class Locations extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get name => text()();
+  IntColumn get colorArgb => integer()();
+  IntColumn get sortOrder => integer()();
+  BoolColumn get isArchived => boolean().withDefault(const Constant(false))();
+}
+
 class TariffZones extends Table {
   IntColumn get id => integer().autoIncrement()();
+  // Defaults to the id of the "Home" location seeded by the schemaVersion-2
+  // migration, so pre-existing zones backfill without an explicit value.
+  IntColumn get locationId => integer().withDefault(const Constant(1))();
   TextColumn get code => text()();
   TextColumn get name => text()();
   TextColumn get kind => text()();
@@ -48,18 +59,22 @@ class MeterReadings extends Table {
       ];
 }
 
-@DriftDatabase(tables: [TariffZones, TariffRates, MeterReadings])
+@DriftDatabase(tables: [Locations, TariffZones, TariffRates, MeterReadings])
 class ElectricityDatabase extends _$ElectricityDatabase {
   ElectricityDatabase(super.connection);
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
         onCreate: (m) async {
           await m.createAll();
           await batch((batch) {
+            batch.insertAll(locations, [
+              LocationsCompanion.insert(
+                  name: 'Home', colorArgb: 0xff008577, sortOrder: 0),
+            ]);
             batch.insertAll(tariffZones, [
               TariffZonesCompanion.insert(
                   code: 'total',
@@ -83,6 +98,21 @@ class ElectricityDatabase extends _$ElectricityDatabase {
                   isArchived: const Value(true)),
             ]);
           });
+        },
+        onUpgrade: (m, from, to) async {
+          // ADR 0006: add a Location entity above TariffZone. Existing zones
+          // backfill to a single default "Home" location (id 1) via the
+          // column's default value, so no reading/rate history moves.
+          if (from < 2) {
+            await m.createTable(locations);
+            await m.addColumn(tariffZones, tariffZones.locationId);
+            await batch((batch) {
+              batch.insertAll(locations, [
+                LocationsCompanion.insert(
+                    name: 'Home', colorArgb: 0xff008577, sortOrder: 0),
+              ]);
+            });
+          }
         },
       );
 }
@@ -148,6 +178,7 @@ class DriftTariffZoneRepository implements domain.TariffZoneRepository {
       .into(database.tariffZones)
       .insertOnConflictUpdate(TariffZonesCompanion.insert(
           id: _idValue(zone.id),
+          locationId: Value(zone.locationId),
           code: zone.code.value,
           name: zone.name,
           kind: zone.kind.name,
@@ -163,6 +194,38 @@ class DriftTariffZoneRepository implements domain.TariffZoneRepository {
       domain.ZoneCode(row.code),
       row.name,
       domain.ZoneKind.values.byName(row.kind),
+      colorArgb: row.colorArgb,
+      sortOrder: row.sortOrder,
+      isArchived: row.isArchived,
+      locationId: row.locationId);
+}
+
+class DriftLocationRepository implements domain.LocationRepository {
+  DriftLocationRepository(this.database);
+  final ElectricityDatabase database;
+  @override
+  Stream<List<domain.Location>> watchAll({bool includeArchived = false}) =>
+      (database.select(database.locations)
+            ..where((row) => includeArchived
+                ? const Constant(true)
+                : row.isArchived.equals(false))
+            ..orderBy([(row) => OrderingTerm.asc(row.sortOrder)]))
+          .watch()
+          .map((rows) => rows.map(_toDomain).toList());
+  @override
+  Future<void> save(domain.Location location) => database
+      .into(database.locations)
+      .insertOnConflictUpdate(LocationsCompanion.insert(
+          id: _idValue(location.id),
+          name: location.name,
+          colorArgb: location.colorArgb,
+          sortOrder: location.sortOrder,
+          isArchived: Value(location.isArchived)));
+  @override
+  Future<void> delete(int id) =>
+      (database.delete(database.locations)..where((row) => row.id.equals(id)))
+          .go();
+  domain.Location _toDomain(Location row) => domain.Location(row.id, row.name,
       colorArgb: row.colorArgb,
       sortOrder: row.sortOrder,
       isArchived: row.isArchived);
