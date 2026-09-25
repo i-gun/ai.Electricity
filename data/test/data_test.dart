@@ -9,7 +9,7 @@ void main() {
     final database = ElectricityDatabase(NativeDatabase.memory());
     addTearDown(database.close);
 
-    expect(database.schemaVersion, 3);
+    expect(database.schemaVersion, 4);
     expect(await database.select(database.tariffZones).get(), hasLength(3));
     final seededLocations = await database.select(database.locations).get();
     expect(seededLocations, hasLength(1));
@@ -187,5 +187,98 @@ void main() {
     expect(await repository.watchAll(locationId: 1).first, hasLength(1));
     expect(await repository.watchAll(locationId: 2).first, hasLength(1));
     expect(await repository.watchAll().first, hasLength(2));
+  });
+
+  test(
+      'migrates a database whose meter_readings UNIQUE constraint predates '
+      'location scoping, allowing a same-date reading for another location',
+      () async {
+    final placeholderDate = DateTime(2020, 1, 1).toIso8601String();
+    final executor = NativeDatabase.memory(setup: (db) {
+      db
+        ..execute('''
+          CREATE TABLE locations (
+            id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            color_argb INTEGER NOT NULL,
+            sort_order INTEGER NOT NULL,
+            is_archived INTEGER NOT NULL DEFAULT 0
+          );
+        ''')
+        ..execute('''
+          CREATE TABLE tariff_zones (
+            id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL,
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            color_argb INTEGER NOT NULL,
+            sort_order INTEGER NOT NULL,
+            is_archived INTEGER NOT NULL DEFAULT 0
+          );
+        ''')
+        ..execute('''
+          CREATE TABLE location_zones (
+            location_id INTEGER NOT NULL,
+            zone_id INTEGER NOT NULL,
+            PRIMARY KEY (location_id, zone_id)
+          );
+        ''')
+        ..execute('''
+          CREATE TABLE tariff_rates (
+            id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+            zone_id TEXT NOT NULL,
+            price_minor_units INTEGER NOT NULL,
+            currency_code TEXT NOT NULL,
+            valid_from TEXT NOT NULL,
+            valid_to TEXT NULL
+          );
+        ''')
+        // This is the exact broken shape: location_id already exists, but
+        // the leftover UNIQUE(zone_id, reading_date) doesn't scope by it.
+        ..execute('''
+          CREATE TABLE meter_readings (
+            id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+            location_id INTEGER NOT NULL DEFAULT 1,
+            zone_id TEXT NOT NULL,
+            reading_date TEXT NOT NULL,
+            value_kwh REAL NOT NULL,
+            note TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            is_reset INTEGER NOT NULL DEFAULT 0,
+            UNIQUE (zone_id, reading_date)
+          );
+        ''')
+        ..execute('INSERT INTO locations (id, name, color_argb, sort_order) '
+            "VALUES (1, 'Home', 100, 0)")
+        ..execute(
+            'INSERT INTO tariff_zones (id, code, name, kind, color_argb, sort_order) '
+            "VALUES (1, 'total', 'Total', 'total', 100, 0)")
+        ..execute(
+            'INSERT INTO location_zones (location_id, zone_id) VALUES (1, 1)')
+        ..execute('INSERT INTO meter_readings '
+            '(id, location_id, zone_id, reading_date, value_kwh, created_at, updated_at) '
+            "VALUES (1, 1, 'total', '$placeholderDate', 100, '$placeholderDate', '$placeholderDate')")
+        ..execute('PRAGMA user_version = 3');
+    });
+
+    final database = ElectricityDatabase(executor);
+    addTearDown(database.close);
+    final repository = DriftMeterReadingRepository(database);
+
+    // The pre-existing reading must survive the migration.
+    expect(await repository.watchAll(locationId: 1).first, hasLength(1));
+
+    // Two locations recording the same zone on the same new date must not
+    // collide with the old UNIQUE(zone_id, reading_date) index.
+    await repository.save(domain.MeterReading(
+        0, 'total', DateTime(2026, 3, 1), domain.Kwh(120),
+        locationId: 1));
+    await repository.save(domain.MeterReading(
+        0, 'total', DateTime(2026, 3, 1), domain.Kwh(45),
+        locationId: 2));
+
+    expect(await repository.watchAll(locationId: 1).first, hasLength(2));
+    expect(await repository.watchAll(locationId: 2).first, hasLength(1));
   });
 }

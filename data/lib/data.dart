@@ -75,14 +75,15 @@ class MeterReadings extends Table {
 class ElectricityDatabase extends _$ElectricityDatabase {
   ElectricityDatabase(super.connection);
 
-  // NOTE: two different physical shapes were both shipped as schemaVersion 2
-  // during development (one with a single TariffZones.locationId column, one
-  // with the LocationZones join table) before this app ever reached a real
-  // user. Because Drift only compares version numbers, an on-disk database
-  // stamped "2" could be either shape, so onUpgrade below detects the actual
+  // NOTE: several physical shapes were shipped under schemaVersion 2 and 3
+  // during development (varying combinations of a single
+  // TariffZones.locationId column, the LocationZones join table, and a
+  // meter_readings.location_id column added without updating its UNIQUE
+  // constraint) before this app ever reached a real user. Because Drift only
+  // compares version numbers, onUpgrade below detects the actual on-disk
   // shape via sqlite_master/PRAGMA instead of trusting `from` alone.
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -127,7 +128,7 @@ class ElectricityDatabase extends _$ElectricityDatabase {
           // one location instead of being duplicated. Existing zones link to
           // a single default "Home" location; meter readings backfill to it,
           // so no reading/rate history is lost.
-          if (from >= 3) return;
+          if (from >= 4) return;
           final tableNames = await customSelect(
                   "SELECT name FROM sqlite_master WHERE type='table'")
               .map((row) => row.read<String>('name'))
@@ -143,12 +144,20 @@ class ElectricityDatabase extends _$ElectricityDatabase {
               await customSelect("PRAGMA table_info('meter_readings')")
                   .map((row) => row.read<String>('name'))
                   .get();
-          if (!readingColumns.contains('locationId')) {
-            await m.addColumn(meterReadings, meterReadings.locationId);
-          }
+          final hasReadingLocationId = readingColumns.contains('location_id');
+          // Recreate meter_readings so its UNIQUE constraint covers
+          // location_id too. A prior migration only added the column via
+          // addColumn, which left the old UNIQUE(zone_id, reading_date)
+          // index in place and rejected a second location's reading on a
+          // date already used by any other location.
+          await m.alterTable(TableMigration(
+            meterReadings,
+            newColumns:
+                hasReadingLocationId ? const [] : [meterReadings.locationId],
+          ));
           if (hasLocationZones) return;
-          // Reuse an already-seeded "Home" row (the short-lived single-FK v2
-          // shape) instead of inserting a second one.
+          // Reuse an already-seeded "Home" row (a short-lived earlier shape)
+          // instead of inserting a second one.
           final existingHome = await (select(locations)
                 ..where((row) => row.name.equals('Home')))
               .getSingleOrNull();
@@ -159,17 +168,18 @@ class ElectricityDatabase extends _$ElectricityDatabase {
               await customSelect("PRAGMA table_info('tariff_zones')")
                   .map((row) => row.read<String>('name'))
                   .get();
-          if (zoneColumns.contains('locationId')) {
-            // Short-lived v2 shape: read the physical column directly, since
-            // the current table definition no longer declares it.
+          if (zoneColumns.contains('location_id')) {
+            // Short-lived single-FK shape: read the physical column
+            // directly, since the current table definition no longer
+            // declares it.
             final rows =
-                await customSelect('SELECT id, locationId FROM tariff_zones')
+                await customSelect('SELECT id, location_id FROM tariff_zones')
                     .get();
             if (rows.isNotEmpty) {
               await batch((batch) => batch.insertAll(locationZones, [
                     for (final row in rows)
                       LocationZonesCompanion.insert(
-                          locationId: row.read<int>('locationId'),
+                          locationId: row.read<int>('location_id'),
                           zoneId: row.read<int>('id')),
                   ]));
             }
