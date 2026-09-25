@@ -75,8 +75,14 @@ class MeterReadings extends Table {
 class ElectricityDatabase extends _$ElectricityDatabase {
   ElectricityDatabase(super.connection);
 
+  // NOTE: two different physical shapes were both shipped as schemaVersion 2
+  // during development (one with a single TariffZones.locationId column, one
+  // with the LocationZones join table) before this app ever reached a real
+  // user. Because Drift only compares version numbers, an on-disk database
+  // stamped "2" could be either shape, so onUpgrade below detects the actual
+  // shape via sqlite_master/PRAGMA instead of trusting `from` alone.
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -119,24 +125,64 @@ class ElectricityDatabase extends _$ElectricityDatabase {
           // ADR 0006: add a Location entity, plus a many-to-many LocationZones
           // link so a zone (and its tariff rates) can be shared by more than
           // one location instead of being duplicated. Existing zones link to
-          // a single default "Home" location; meter readings backfill to it
-          // via the column's default value, so no reading/rate history moves.
-          if (from < 2) {
+          // a single default "Home" location; meter readings backfill to it,
+          // so no reading/rate history is lost.
+          if (from >= 3) return;
+          final tableNames = await customSelect(
+                  "SELECT name FROM sqlite_master WHERE type='table'")
+              .map((row) => row.read<String>('name'))
+              .get();
+          if (!tableNames.contains('locations')) {
             await m.createTable(locations);
+          }
+          final hasLocationZones = tableNames.contains('location_zones');
+          if (!hasLocationZones) {
             await m.createTable(locationZones);
+          }
+          final readingColumns =
+              await customSelect("PRAGMA table_info('meter_readings')")
+                  .map((row) => row.read<String>('name'))
+                  .get();
+          if (!readingColumns.contains('locationId')) {
             await m.addColumn(meterReadings, meterReadings.locationId);
-            final homeId = await into(locations).insert(
-                LocationsCompanion.insert(
-                    name: 'Home', colorArgb: 0xff008577, sortOrder: 0));
+          }
+          if (hasLocationZones) return;
+          // Reuse an already-seeded "Home" row (the short-lived single-FK v2
+          // shape) instead of inserting a second one.
+          final existingHome = await (select(locations)
+                ..where((row) => row.name.equals('Home')))
+              .getSingleOrNull();
+          final homeId = existingHome?.id ??
+              await into(locations).insert(LocationsCompanion.insert(
+                  name: 'Home', colorArgb: 0xff008577, sortOrder: 0));
+          final zoneColumns =
+              await customSelect("PRAGMA table_info('tariff_zones')")
+                  .map((row) => row.read<String>('name'))
+                  .get();
+          if (zoneColumns.contains('locationId')) {
+            // Short-lived v2 shape: read the physical column directly, since
+            // the current table definition no longer declares it.
+            final rows =
+                await customSelect('SELECT id, locationId FROM tariff_zones')
+                    .get();
+            if (rows.isNotEmpty) {
+              await batch((batch) => batch.insertAll(locationZones, [
+                    for (final row in rows)
+                      LocationZonesCompanion.insert(
+                          locationId: row.read<int>('locationId'),
+                          zoneId: row.read<int>('id')),
+                  ]));
+            }
+          } else {
+            // Genuine v1 (pre-ADR-0006): link every zone to the default
+            // "Home" location.
             final existingZones = await select(tariffZones).get();
             if (existingZones.isNotEmpty) {
-              await batch((batch) {
-                batch.insertAll(locationZones, [
-                  for (final zone in existingZones)
-                    LocationZonesCompanion.insert(
-                        locationId: homeId, zoneId: zone.id),
-                ]);
-              });
+              await batch((batch) => batch.insertAll(locationZones, [
+                    for (final zone in existingZones)
+                      LocationZonesCompanion.insert(
+                          locationId: homeId, zoneId: zone.id),
+                  ]));
             }
           }
         },

@@ -9,7 +9,7 @@ void main() {
     final database = ElectricityDatabase(NativeDatabase.memory());
     addTearDown(database.close);
 
-    expect(database.schemaVersion, 2);
+    expect(database.schemaVersion, 3);
     expect(await database.select(database.tariffZones).get(), hasLength(3));
     final seededLocations = await database.select(database.locations).get();
     expect(seededLocations, hasLength(1));

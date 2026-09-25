@@ -122,13 +122,22 @@ class _SharedHomeState extends State<SharedHome> {
           onAdd: _addReading,
           onEdit: _editReading,
           onDelete: _deleteReading),
+      LocationsView(
+          locations: locations,
+          zones: zones,
+          onToggleLocation: _toggleLocation,
+          onAddLocation: _addLocation,
+          onEditLocation: _editLocation,
+          onDeleteLocation: _deleteLocation),
       ZonesView(
           zones: zones,
           locations: locations,
+          currentLocationId: currentLocationId,
           rates: rates,
           currencyCode: currencyCode,
           onCurrencyChanged: (code) => setState(() => currencyCode = code),
           onToggleZone: _toggleZone,
+          onToggleZoneLocation: _toggleZoneLocation,
           onAddZone: _addZone,
           onEditZone: _editZone,
           onDeleteZone: _deleteZone,
@@ -148,13 +157,6 @@ class _SharedHomeState extends State<SharedHome> {
                 range = r;
                 rangeKey = key;
               })),
-      LocationsView(
-          locations: locations,
-          zones: zones,
-          onToggleLocation: _toggleLocation,
-          onAddLocation: _addLocation,
-          onEditLocation: _editLocation,
-          onDeleteLocation: _deleteLocation),
     ];
     final activeLocations = locations.where((l) => !l.isArchived).toList()
       ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
@@ -194,14 +196,14 @@ class _SharedHomeState extends State<SharedHome> {
                           icon: Icon(Icons.speed_outlined),
                           label: Text('Readings')),
                       NavigationRailDestination(
+                          icon: Icon(Icons.home_outlined),
+                          label: Text('Locations')),
+                      NavigationRailDestination(
                           icon: Icon(Icons.tune),
                           label: Text('Zones & tariffs')),
                       NavigationRailDestination(
                           icon: Icon(Icons.insights_outlined),
-                          label: Text('Stats')),
-                      NavigationRailDestination(
-                          icon: Icon(Icons.home_work_outlined),
-                          label: Text('Locations'))
+                          label: Text('Stats'))
                     ]),
                 const VerticalDivider(width: 1),
                 Expanded(child: pages[tab])
@@ -214,12 +216,11 @@ class _SharedHomeState extends State<SharedHome> {
                     NavigationDestination(
                         icon: Icon(Icons.speed_outlined), label: 'Readings'),
                     NavigationDestination(
+                        icon: Icon(Icons.home_outlined), label: 'Locations'),
+                    NavigationDestination(
                         icon: Icon(Icons.tune), label: 'Zones'),
                     NavigationDestination(
-                        icon: Icon(Icons.insights_outlined), label: 'Stats'),
-                    NavigationDestination(
-                        icon: Icon(Icons.home_work_outlined),
-                        label: 'Locations')
+                        icon: Icon(Icons.insights_outlined), label: 'Stats')
                   ])
             : null,
         floatingActionButton: widget.compact && tab == 0
@@ -309,6 +310,21 @@ class _SharedHomeState extends State<SharedHome> {
 
   Future<void> _toggleZone(TariffZone zone) =>
       _saveZone(zone.copyWith(isArchived: !zone.isArchived));
+
+  Future<void> _toggleZoneLocation(TariffZone zone) async {
+    final linked = zone.locationIds.contains(currentLocationId);
+    if (linked && zone.locationIds.length <= 1) {
+      _notify('A zone must stay linked to at least one location.');
+      return;
+    }
+    final updatedIds = {...zone.locationIds};
+    if (linked) {
+      updatedIds.remove(currentLocationId);
+    } else {
+      updatedIds.add(currentLocationId);
+    }
+    await _saveZone(zone.copyWith(locationIds: updatedIds));
+  }
 
   Future<void> _addZone() async {
     final zone = await showDialog<TariffZone>(
@@ -749,10 +765,12 @@ class ZonesView extends StatelessWidget {
       {super.key,
       required this.zones,
       this.locations = const [],
+      this.currentLocationId = 1,
       required this.rates,
       required this.currencyCode,
       required this.onCurrencyChanged,
       required this.onToggleZone,
+      this.onToggleZoneLocation,
       required this.onAddZone,
       required this.onEditZone,
       required this.onDeleteZone,
@@ -761,10 +779,12 @@ class ZonesView extends StatelessWidget {
       required this.onDeleteRate});
   final List<TariffZone> zones;
   final List<Location> locations;
+  final int currentLocationId;
   final List<TariffRate> rates;
   final String currencyCode;
   final ValueChanged<String> onCurrencyChanged;
   final ValueChanged<TariffZone> onToggleZone;
+  final ValueChanged<TariffZone>? onToggleZoneLocation;
   final VoidCallback onAddZone;
   final ValueChanged<TariffZone> onEditZone;
   final ValueChanged<TariffZone> onDeleteZone;
@@ -811,6 +831,14 @@ class ZonesView extends StatelessWidget {
                         .where((location) =>
                             zone.locationIds.contains(location.id))
                         .toList(),
+                    // Only offered once a second location exists, so a
+                    // single-location install keeps today's tile unchanged.
+                    linkedHere: locations.length > 1
+                        ? zone.locationIds.contains(currentLocationId)
+                        : null,
+                    onToggleHere: onToggleZoneLocation == null
+                        ? null
+                        : () => onToggleZoneLocation!(zone),
                     rates: rates
                         .where((rate) => rate.zoneId == zone.code.value)
                         .toList(),
@@ -828,6 +856,8 @@ class _ZoneTile extends StatelessWidget {
   const _ZoneTile(
       {required this.zone,
       this.locations = const [],
+      this.linkedHere,
+      this.onToggleHere,
       required this.rates,
       required this.onToggle,
       required this.onEdit,
@@ -837,6 +867,8 @@ class _ZoneTile extends StatelessWidget {
       required this.onDeleteRate});
   final TariffZone zone;
   final List<Location> locations;
+  final bool? linkedHere;
+  final VoidCallback? onToggleHere;
   final List<TariffRate> rates;
   final VoidCallback onToggle;
   final VoidCallback onEdit;
@@ -861,6 +893,14 @@ class _ZoneTile extends StatelessWidget {
           '${zone.isArchived ? 'Archived' : 'Active'} • ${sorted.length} rate window${sorted.length == 1 ? '' : 's'}'
           '${locations.length > 1 ? ' • ${locations.map((l) => l.name).join(', ')}' : ''}'),
       trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+        if (linkedHere != null)
+          Tooltip(
+              message: 'Linked to the currently selected location',
+              child: Semantics(
+                  label: '${zone.name} linked to this location',
+                  child: Switch(
+                      value: linkedHere!,
+                      onChanged: (_) => onToggleHere?.call()))),
         Semantics(
             label: '${zone.name} active',
             child:

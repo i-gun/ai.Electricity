@@ -266,6 +266,51 @@ void main() {
     expect(find.text('Cabin'), findsWidgets);
   });
 
+  testWidgets('Locations tab sits above Zones & tariffs with a home icon',
+      (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: SharedHome()));
+
+    final rail = tester.widget<NavigationRail>(find.byType(NavigationRail));
+    String labelOf(NavigationRailDestination destination) =>
+        (destination.label as Text).data!;
+    final labels = rail.destinations.map(labelOf).toList();
+    expect(labels.indexOf('Locations'),
+        lessThan(labels.indexOf('Zones & tariffs')));
+    expect(
+        (rail.destinations.firstWhere((d) => labelOf(d) == 'Locations').icon
+                as Icon)
+            .icon,
+        Icons.home_outlined);
+  });
+
+  testWidgets(
+      'a zone can be quick-toggled on/off for the current location, guarding the last link',
+      (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: SharedHome()));
+    await tester.tap(find.text('Locations'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'New location'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Location name'), 'Cabin');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Zones & tariffs'));
+    await tester.pumpAndSettle();
+
+    // 'Total' is only linked to 'Home' (the currently selected location), so
+    // toggling it off here would leave it linked to no location at all.
+    expect(find.byTooltip('Linked to the currently selected location'),
+        findsWidgets);
+    await tester
+        .tap(find.byTooltip('Linked to the currently selected location').first);
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('must stay linked to at least one location'),
+        findsOneWidget);
+  });
+
   testWidgets(
       'a zone shared by two locations keeps their readings separate in Per zone mode',
       (tester) async {
