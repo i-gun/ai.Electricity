@@ -1220,10 +1220,9 @@ class _StatsViewState extends State<StatsView> {
                 semanticsLabel: 'Consumption by location donut chart',
                 locations: activeLocations,
                 valueOf: (location) =>
-                    _locationConsumption(location.id, zones, consumptionByZone)
-                        .value,
+                    _locationConsumption(location.id, zones, consumption).value,
                 labelOf: (location) =>
-                    '${_locationConsumption(location.id, zones, consumptionByZone).value.toStringAsFixed(1)} kWh');
+                    '${_locationConsumption(location.id, zones, consumption).value.toStringAsFixed(1)} kWh');
             final expenseDonut = _LocationDonut(
                 title: 'Expenses by location',
                 semanticsLabel: 'Expenses by location donut chart',
@@ -1231,13 +1230,13 @@ class _StatsViewState extends State<StatsView> {
                     .where((location) => !excludedLocations.contains(location))
                     .toList(),
                 valueOf: (location) => _locationExpense(
-                        location.id, zones, expenseByZone, currencyCode)
+                        location.id, zones, consumption, rates, currencyCode)
                     .minorUnits
                     .toDouble(),
                 labelOf: (location) => _money(
                     context,
                     _locationExpense(
-                        location.id, zones, expenseByZone, currencyCode)));
+                        location.id, zones, consumption, rates, currencyCode)));
             if (constraints.maxWidth < 600) {
               return Column(children: [consumptionDonut, expenseDonut]);
             }
@@ -1471,19 +1470,35 @@ List<BarChartRodStackItem> _stackItems(
 /// A location's consumption is its component zones (day/night, ...) when they
 /// have data, falling back to its total zone otherwise — the same
 /// double-counting guard `_chartZones` applies within a single location.
-Kwh _locationConsumption(int locationId, List<TariffZone> zones,
-    Map<String, Kwh> consumptionByZone) {
+///
+/// Deltas are filtered to this location *before* summing by zone, because a
+/// zone code can be shared by more than one location: summing an
+/// already-merged-across-locations map here would make every location that
+/// shares a zone report the same combined grand total instead of its own.
+Kwh _locationConsumption(
+    int locationId, List<TariffZone> zones, List<ConsumptionDelta> deltas) {
+  final locationDeltas =
+      deltas.where((delta) => delta.locationId == locationId).toList();
   final locationZones =
       zones.where((zone) => zone.locationIds.contains(locationId)).toList();
-  final selected = _chartZones(locationZones, consumptionByZone.keys);
-  return selected.fold(Kwh(0),
-      (sum, zone) => sum + (consumptionByZone[zone.code.value] ?? Kwh(0)));
+  final totalsByZone = ConsumptionCalculator().totalsByZone(locationDeltas);
+  final selected = _chartZones(locationZones, totalsByZone.keys);
+  return selected.fold(
+      Kwh(0), (sum, zone) => sum + (totalsByZone[zone.code.value] ?? Kwh(0)));
 }
 
-Money _locationExpense(int locationId, List<TariffZone> zones,
-    Map<String, Money> expenseByZone, String currencyCode) {
+Money _locationExpense(
+    int locationId,
+    List<TariffZone> zones,
+    List<ConsumptionDelta> deltas,
+    List<TariffRate> rates,
+    String currencyCode) {
+  final locationDeltas =
+      deltas.where((delta) => delta.locationId == locationId).toList();
   final locationZones =
       zones.where((zone) => zone.locationIds.contains(locationId)).toList();
+  final expenseByZone = ExpenseCalculator()
+      .calculateByZone(locationDeltas, rates, currencyCode: currencyCode);
   final selected = _chartZones(locationZones, expenseByZone.keys);
   return selected.fold(
       Money(0, currencyCode: currencyCode),

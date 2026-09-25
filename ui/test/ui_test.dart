@@ -266,6 +266,53 @@ void main() {
     expect(find.text('Cabin'), findsWidgets);
   });
 
+  testWidgets(
+      'combined mode reports each location\'s own total, not the grand total, for a shared zone',
+      (tester) async {
+    final locations = [
+      const Location(1, 'Home', colorArgb: 0xff008577),
+      const Location(2, 'Cabin', colorArgb: 0xffdb4437),
+    ];
+    // Same zone (and tariff) reused by both locations instead of duplicated.
+    final zones = [
+      TariffZone(1, ZoneCode('total'), 'Total', ZoneKind.total,
+          locationIds: {1, 2}),
+    ];
+    final readings = [
+      MeterReading(1, 'total', DateTime(2026, 3, 1), Kwh(100), locationId: 1),
+      MeterReading(2, 'total', DateTime(2026, 3, 10), Kwh(130), locationId: 1),
+      MeterReading(3, 'total', DateTime(2026, 3, 1), Kwh(500), locationId: 2),
+      MeterReading(4, 'total', DateTime(2026, 3, 10), Kwh(540), locationId: 2),
+    ];
+    final rates = [
+      TariffRate(1, 'total', Money(20), DateTime(2025, 1, 1)),
+    ];
+
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: StatsView(
+                readings: readings,
+                rates: rates,
+                zones: zones,
+                locations: locations,
+                range: DateRange(DateTime(2026, 1, 1), DateTime(2026, 12, 31)),
+                rangeKey: 'custom',
+                currencyCode: 'EUR',
+                onRangeChanged: (_, __) {}))));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Combined (all locations)'));
+    await tester.pumpAndSettle();
+
+    // Home: 100 -> 130 (30 kWh); Cabin: 500 -> 540 (40 kWh); grand total 70.
+    // The grand total still legitimately appears once, in the "Total
+    // consumption" summary tile — only the per-location donut/legend values
+    // must not also read 70.
+    expect(find.text('30.0 kWh'), findsWidgets);
+    expect(find.text('40.0 kWh'), findsWidgets);
+    expect(find.text('70.0 kWh'), findsOneWidget);
+  });
+
   testWidgets('Locations tab sits above Zones & tariffs with a home icon',
       (tester) async {
     await tester.pumpWidget(const MaterialApp(home: SharedHome()));
