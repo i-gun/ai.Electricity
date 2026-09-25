@@ -17,4 +17,5 @@ Living summary the Advisory Agent maintains and the Code Generation Agent reads 
 ## Open items
 
 - Backlog ticket [`docs/backlog/mvp-001-meter-tracking.md`](../backlog/mvp-001-meter-tracking.md) is ready for the Code Generation Agent.
+- Backlog ticket [`docs/backlog/mvp-004-multi-location-support.md`](../backlog/mvp-004-multi-location-support.md) is ready for the Code Generation Agent — see [`docs/adr/0006-multi-location-support-and-combined-charts.md`](adr/0006-multi-location-support-and-combined-charts.md) (**accepted**).
 - Follow-up ADRs still owed: export/backup, cloud sync, OCR meter-photo entry.
