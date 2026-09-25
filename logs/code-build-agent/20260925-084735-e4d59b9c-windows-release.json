@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "agent": "code-build-agent",
+  "runId": "20260925-084735-e4d59b9c-windows-release",
+  "status": "pass",
+  "commit": "04bb5ed4344b927b22fdb7e1f8d946e097a0fa5e",
+  "sourceRef": "feat/mvp-004-multi-location-support",
+  "idempotencyKey": "04bb5ed4344b927b22fdb7e1f8d946e097a0fa5e:windows-desktop:release:flutter-windows-bundle",
+  "confirmedTargets": [
+    { "platform": "windows-desktop", "format": "Flutter Windows bundle (zip)", "mode": "release" }
+  ],
+  "artifacts": [
+    {
+      "path": "build/code-build-agent/20260925-084735-e4d59b9c-windows-release/ai.Electricity-desktop-windows-release-04bb5ed.zip",
+      "sha256": "456cb17cb3f49ab22cc31259f78e99de16cc2629dae4b785ec6d5998fdc5845b",
+      "bytes": 13353594
+    }
+  ],
+  "manifest": "build/code-build-agent/20260925-084735-e4d59b9c-windows-release/report/manifest.json",
+  "checksums": "build/code-build-agent/20260925-084735-e4d59b9c-windows-release/report/SHA256SUMS",
+  "errors": [],
+  "timestampUtc": "2026-09-25T08:47:35Z"
+}
