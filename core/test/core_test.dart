@@ -149,21 +149,16 @@ void main() {
   });
 
   test('consumption and expenses group by owning location', () {
-    final zones = [
-      TariffZone(1, ZoneCode('day'), 'Day', ZoneKind.day, locationId: 1),
-      TariffZone(2, ZoneCode('night'), 'Night', ZoneKind.night, locationId: 1),
-      TariffZone(3, ZoneCode('cabin-total'), 'Cabin', ZoneKind.total,
-          locationId: 2),
-    ];
     final deltas = [
       ConsumptionDelta(
-          DateTime(2026, 1, 1), DateTime(2026, 1, 2), Kwh(10), 'day'),
+          DateTime(2026, 1, 1), DateTime(2026, 1, 2), Kwh(10), 'day',
+          locationId: 1),
       ConsumptionDelta(
-          DateTime(2026, 1, 1), DateTime(2026, 1, 2), Kwh(4), 'night'),
+          DateTime(2026, 1, 1), DateTime(2026, 1, 2), Kwh(4), 'night',
+          locationId: 1),
       ConsumptionDelta(
-          DateTime(2026, 1, 1), DateTime(2026, 1, 2), Kwh(6), 'cabin-total'),
-      ConsumptionDelta(
-          DateTime(2026, 1, 1), DateTime(2026, 1, 2), Kwh(1), 'unknown-zone'),
+          DateTime(2026, 1, 1), DateTime(2026, 1, 2), Kwh(6), 'cabin-total',
+          locationId: 2),
     ];
     final rates = [
       TariffRate(1, 'day', Money(20), DateTime(2025, 1, 1)),
@@ -172,13 +167,13 @@ void main() {
     ];
     final calculator = ConsumptionCalculator();
 
-    final totalsByLocation = calculator.totalsByLocation(deltas, zones);
+    final totalsByLocation = calculator.totalsByLocation(deltas);
     expect(totalsByLocation[1], Kwh(14));
     expect(totalsByLocation[2], Kwh(6));
     expect(totalsByLocation, hasLength(2));
 
     final expenseByLocation =
-        ExpenseCalculator().calculateByLocation(deltas, rates, zones);
+        ExpenseCalculator().calculateByLocation(deltas, rates);
     expect(expenseByLocation[1]?.minorUnits, 240);
     expect(expenseByLocation[2]?.minorUnits, 90);
   });
@@ -192,22 +187,35 @@ void main() {
     expect(location.copyWith().colorArgb, location.colorArgb);
 
     final zone = TariffZone(1, ZoneCode('day'), 'Day', ZoneKind.day);
-    expect(zone.locationId, 1);
-    expect(zone.copyWith(locationId: 2).locationId, 2);
+    expect(zone.locationIds, {1});
+    expect(zone.copyWith(locationIds: {1, 2}).locationIds, {1, 2});
+  });
+
+  test('a zone linked to multiple locations is not duplicated', () {
+    final shared = TariffZone(1, ZoneCode('day'), 'Day', ZoneKind.day,
+        locationIds: {1, 2});
+    expect(shared.locationIds, {1, 2});
+    // Same zone/tariff, but readings at each location are paired separately.
+    final readings = [
+      MeterReading(1, 'day', DateTime(2026, 1, 1), Kwh(100), locationId: 1),
+      MeterReading(2, 'day', DateTime(2026, 1, 2), Kwh(110), locationId: 1),
+      MeterReading(3, 'day', DateTime(2026, 1, 1), Kwh(50), locationId: 2),
+      MeterReading(4, 'day', DateTime(2026, 1, 2), Kwh(53), locationId: 2),
+    ];
+    final deltas = ConsumptionCalculator().deltas(readings);
+    final byLocation = ConsumptionCalculator().totalsByLocation(deltas);
+    expect(byLocation[1], Kwh(10));
+    expect(byLocation[2], Kwh(3));
   });
 
   test('mixed-currency locations are a hard error, not a silent sum', () {
-    final zones = [
-      TariffZone(1, ZoneCode('home-total'), 'Home', ZoneKind.total,
-          locationId: 1),
-      TariffZone(2, ZoneCode('cabin-total'), 'Cabin', ZoneKind.total,
-          locationId: 1),
-    ];
     final deltas = [
       ConsumptionDelta(
-          DateTime(2026, 1, 1), DateTime(2026, 1, 2), Kwh(10), 'home-total'),
+          DateTime(2026, 1, 1), DateTime(2026, 1, 2), Kwh(10), 'home-total',
+          locationId: 1),
       ConsumptionDelta(
-          DateTime(2026, 1, 1), DateTime(2026, 1, 2), Kwh(5), 'cabin-total'),
+          DateTime(2026, 1, 1), DateTime(2026, 1, 2), Kwh(5), 'cabin-total',
+          locationId: 1),
     ];
     final rates = [
       TariffRate(1, 'home-total', Money(20, currencyCode: 'EUR'),
@@ -220,8 +228,7 @@ void main() {
     // still contributes to totalsByLocation but not to calculateByLocation's
     // Money total for that location; combining currencies directly would
     // otherwise require a mismatched Money addition, which throws.
-    final byLocation =
-        ExpenseCalculator().calculateByLocation(deltas, rates, zones);
+    final byLocation = ExpenseCalculator().calculateByLocation(deltas, rates);
     expect(byLocation[1]?.minorUnits, 200);
     expect(() => Money(1, currencyCode: 'EUR') + Money(1, currencyCode: 'USD'),
         throwsArgumentError);

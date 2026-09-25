@@ -206,8 +206,10 @@ void main() {
     await tester.pumpAndSettle();
 
     // 'Home' owns the seeded zones, so deletion is blocked immediately by a
-    // snack bar rather than opening a confirmation dialog.
-    expect(find.text('Home'), findsOneWidget);
+    // snack bar rather than opening a confirmation dialog. A second location
+    // also adds a location switcher to the app bar, so 'Home' now renders
+    // twice (switcher + Locations list tile).
+    expect(find.text('Home'), findsWidgets);
     expect(find.textContaining('archive it instead'), findsOneWidget);
   });
 
@@ -220,15 +222,19 @@ void main() {
     ];
     final zones = [
       TariffZone(1, ZoneCode('home-total'), 'Home total', ZoneKind.total,
-          locationId: 1),
+          locationIds: {1}),
       TariffZone(2, ZoneCode('cabin-total'), 'Cabin total', ZoneKind.total,
-          locationId: 2),
+          locationIds: {2}),
     ];
     final readings = [
-      MeterReading(1, 'home-total', DateTime(2026, 3, 1), Kwh(100)),
-      MeterReading(2, 'home-total', DateTime(2026, 3, 10), Kwh(130)),
-      MeterReading(3, 'cabin-total', DateTime(2026, 3, 1), Kwh(20)),
-      MeterReading(4, 'cabin-total', DateTime(2026, 3, 10), Kwh(35)),
+      MeterReading(1, 'home-total', DateTime(2026, 3, 1), Kwh(100),
+          locationId: 1),
+      MeterReading(2, 'home-total', DateTime(2026, 3, 10), Kwh(130),
+          locationId: 1),
+      MeterReading(3, 'cabin-total', DateTime(2026, 3, 1), Kwh(20),
+          locationId: 2),
+      MeterReading(4, 'cabin-total', DateTime(2026, 3, 10), Kwh(35),
+          locationId: 2),
     ];
     final rates = [
       TariffRate(1, 'home-total', Money(20), DateTime(2025, 1, 1)),
@@ -258,5 +264,47 @@ void main() {
     expect(find.text('Expenses by location'), findsOneWidget);
     expect(find.text('Home'), findsWidgets);
     expect(find.text('Cabin'), findsWidgets);
+  });
+
+  testWidgets(
+      'a zone shared by two locations keeps their readings separate in Per zone mode',
+      (tester) async {
+    final locations = [
+      const Location(1, 'Home', colorArgb: 0xff008577),
+      const Location(2, 'Cabin', colorArgb: 0xffdb4437),
+    ];
+    // Same zone (and tariff) reused by both locations instead of duplicated.
+    final zones = [
+      TariffZone(1, ZoneCode('total'), 'Total', ZoneKind.total,
+          locationIds: {1, 2}),
+    ];
+    final readings = [
+      MeterReading(1, 'total', DateTime(2026, 3, 1), Kwh(100), locationId: 1),
+      MeterReading(2, 'total', DateTime(2026, 3, 10), Kwh(130), locationId: 1),
+      MeterReading(3, 'total', DateTime(2026, 3, 1), Kwh(500), locationId: 2),
+      MeterReading(4, 'total', DateTime(2026, 3, 10), Kwh(540), locationId: 2),
+    ];
+    final rates = [
+      TariffRate(1, 'total', Money(20), DateTime(2025, 1, 1)),
+    ];
+
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: StatsView(
+                readings: readings,
+                rates: rates,
+                zones: zones,
+                locations: locations,
+                currentLocationId: 1,
+                range: DateRange(DateTime(2026, 1, 1), DateTime(2026, 12, 31)),
+                rangeKey: 'custom',
+                currencyCode: 'EUR',
+                onRangeChanged: (_, __) {}))));
+    await tester.pumpAndSettle();
+
+    // Per zone (default) mode is scoped to currentLocationId=1: only Home's
+    // 30 kWh delta should be reflected, not Cabin's 40 kWh delta.
+    expect(find.text('30.0 kWh'), findsWidgets);
+    expect(find.text('40.0 kWh'), findsNothing);
   });
 }

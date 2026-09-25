@@ -113,3 +113,38 @@ explanatory message instead of silently summing incompatible currencies.
 
 Backlog ticket: [`docs/backlog/mvp-004-multi-location-support.md`](../backlog/mvp-004-multi-location-support.md)
 (label `agent:codegen`, actionable now that this ADR is accepted).
+
+## Addendum (2026-09-24) — Decision 1 revised: zones are many-to-many with locations
+
+Initial implementation gave `TariffZone` a single `locationId`, so a zone (and its tariff rates)
+belonged to exactly one location. User feedback identified a real MVP gap this created: a user
+with `Home` and `Apartment` who both bill `Day`/`Night` on the same tariff would have to duplicate
+those zones and rates per location — exactly the duplication this ADR set out to avoid.
+
+**Revised model**: `TariffZone` no longer carries a location at all; a new `location_zone` join
+table (`locationId`, `zoneId`) lets a zone — and by extension every tariff rate recorded against
+it — be linked to any number of locations. `MeterReading` gains its own `locationId`, because a
+shared zone code alone no longer identifies which location's meter a reading belongs to.
+
+```
+location       (id, name, colorArgb, sortOrder, isArchived)
+tariff_zone    (id, code, name, kind, colorArgb, sortOrder, isArchived)   -- no location field
+location_zone  (locationId, zoneId)                                      -- many-to-many
+tariff_rate    (id, zoneId, ...)                    -- unchanged; shared automatically via the zone
+meter_reading  (id, locationId, zoneId, ...)         -- locationId added; UNIQUE(locationId, zoneId, readingDate)
+```
+
+| Option | Verdict |
+|---|---|
+| Keep `TariffZone.locationId` (one location per zone) | Rejected — forces duplicating a zone and its whole rate history to reuse an identical tariff at a second location, which is the exact pain point reported. |
+| `location_zone` join table; zone stays location-agnostic; rates unchanged | **Chosen.** A zone/tariff is defined once and linked to N locations; unlinking (not just deleting) a zone from a location is now possible. |
+| Composite zone identity (`locationId + zoneId` as the code) | Rejected — reintroduces duplication of the tariff rate rows to keep two locations' "Day" in sync, which is what a shared zone is meant to eliminate. |
+
+Consequences of the revision: `ConsumptionCalculator.deltas` now pairs readings per
+`(locationId, zoneId)`, not per `zoneId` alone, so two locations sharing a zone never cross-pair
+each other's cumulative readings. The Stats tab's `Per zone` mode is now scoped to a single
+"current location" (a new app-bar switcher, shown only once a second location exists) for the same
+reason; `Combined` mode is unaffected. `TariffZoneRepository.save` persists the zone row and its
+`location_zone` links transactionally; `delete` cascades the links. This addendum supersedes
+Decision 1's schema and the "required `locationId`" consequence above; Decisions 2–5 and the
+combined-chart design are otherwise unchanged.

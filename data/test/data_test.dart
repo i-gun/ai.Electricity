@@ -16,13 +16,14 @@ void main() {
     expect(seededLocations.single.name, 'Home');
   });
 
-  test('every seeded zone backfills to the default Home location', () async {
+  test('every seeded zone links to the default Home location', () async {
     final database = ElectricityDatabase(NativeDatabase.memory());
     addTearDown(database.close);
 
     final home = (await database.select(database.locations).get()).single;
-    final zones = await database.select(database.tariffZones).get();
-    expect(zones.map((zone) => zone.locationId), everyElement(home.id));
+    final links = await database.select(database.locationZones).get();
+    expect(links, hasLength(3));
+    expect(links.map((link) => link.locationId), everyElement(home.id));
   });
 
   test('reading repository round-trips through Drift', () async {
@@ -134,7 +135,7 @@ void main() {
         await repository.watchAll(includeArchived: true).first, hasLength(1));
   });
 
-  test('zone repository persists and round-trips locationId', () async {
+  test('zone repository links a zone to more than one location', () async {
     final database = ElectricityDatabase(NativeDatabase.memory());
     addTearDown(database.close);
     final locationRepository = DriftLocationRepository(database);
@@ -145,10 +146,46 @@ void main() {
         .firstWhere((location) => location.name == 'Cabin');
 
     await zoneRepository.save(domain.TariffZone(
-        0, domain.ZoneCode('cabin-total'), 'Cabin total', domain.ZoneKind.total,
-        locationId: cabin.id));
+        0, domain.ZoneCode('shared'), 'Shared zone', domain.ZoneKind.custom,
+        locationIds: {1, cabin.id}));
     final saved = (await zoneRepository.watchAll().first)
-        .firstWhere((zone) => zone.code.value == 'cabin-total');
-    expect(saved.locationId, cabin.id);
+        .firstWhere((zone) => zone.code.value == 'shared');
+    expect(saved.locationIds, {1, cabin.id});
+
+    // Unlinking a location (without deleting the zone) removes it from the set.
+    await zoneRepository.save(saved.copyWith(locationIds: {1}));
+    final updated = (await zoneRepository.watchAll().first)
+        .firstWhere((zone) => zone.code.value == 'shared');
+    expect(updated.locationIds, {1});
+  });
+
+  test('deleting a zone removes its location links', () async {
+    final database = ElectricityDatabase(NativeDatabase.memory());
+    addTearDown(database.close);
+    final zoneRepository = DriftTariffZoneRepository(database);
+    final day = (await zoneRepository.watchAll(includeArchived: true).first)
+        .firstWhere((zone) => zone.code.value == 'day');
+
+    await zoneRepository.delete(day.id);
+
+    final links = await database.select(database.locationZones).get();
+    expect(links.map((link) => link.zoneId), isNot(contains(day.id)));
+  });
+
+  test('meter reading repository filters by location', () async {
+    final database = ElectricityDatabase(NativeDatabase.memory());
+    addTearDown(database.close);
+    final repository = DriftMeterReadingRepository(database);
+
+    await repository.save(domain.MeterReading(
+        0, 'total', DateTime(2026, 1, 1), domain.Kwh(100),
+        locationId: 1));
+    await repository.save(domain.MeterReading(
+        0, 'total', DateTime(2026, 1, 1), domain.Kwh(50),
+        locationId: 2));
+
+    expect(await repository.watchAll(locationId: 1).first, hasLength(1));
+    expect(await repository.watchAll(locationId: 2).first, hasLength(1));
+    expect(await repository.watchAll().first, hasLength(2));
   });
 }

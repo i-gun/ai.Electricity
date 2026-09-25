@@ -54,10 +54,15 @@ class _SharedHomeState extends State<SharedHome> {
   DateRange range = DateRange.lastMonths(3);
   String rangeKey = '3M';
   String currencyCode = 'EUR';
+  int currentLocationId = 1;
 
-  List<TariffZone> get activeZones =>
-      zones.where((zone) => !zone.isArchived).toList()
-        ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+  List<TariffZone> get activeZones => zonesAt(currentLocationId);
+
+  List<TariffZone> zonesAt(int locationId) => zones
+      .where(
+          (zone) => !zone.isArchived && zone.locationIds.contains(locationId))
+      .toList()
+    ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
 
   @override
   void initState() {
@@ -103,15 +108,23 @@ class _SharedHomeState extends State<SharedHome> {
 
   @override
   Widget build(BuildContext context) {
+    // A zone can be linked to more than one location, so the Readings tab and
+    // the Stats tab's "Per zone" mode are scoped to whichever location is
+    // currently selected; "Combined" mode in Stats still spans all locations.
+    final locationReadings =
+        readings.where((r) => r.locationId == currentLocationId).toList();
+    final locationZones =
+        zones.where((z) => z.locationIds.contains(currentLocationId)).toList();
     final pages = [
       ReadingsView(
-          readings: readings,
-          zones: zones,
+          readings: locationReadings,
+          zones: locationZones,
           onAdd: _addReading,
           onEdit: _editReading,
           onDelete: _deleteReading),
       ZonesView(
           zones: zones,
+          locations: locations,
           rates: rates,
           currencyCode: currencyCode,
           onCurrencyChanged: (code) => setState(() => currencyCode = code),
@@ -127,6 +140,7 @@ class _SharedHomeState extends State<SharedHome> {
           rates: rates,
           zones: zones,
           locations: locations,
+          currentLocationId: currentLocationId,
           range: range,
           rangeKey: rangeKey,
           currencyCode: currencyCode,
@@ -142,8 +156,32 @@ class _SharedHomeState extends State<SharedHome> {
           onEditLocation: _editLocation,
           onDeleteLocation: _deleteLocation),
     ];
+    final activeLocations = locations.where((l) => !l.isArchived).toList()
+      ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
     return Scaffold(
-        appBar: AppBar(title: const Text('ai.Electricity')),
+        appBar: AppBar(title: const Text('ai.Electricity'), actions: [
+          // Only shown once a second location exists, so a single-location
+          // install keeps today's app bar unchanged.
+          if (activeLocations.length > 1)
+            Padding(
+                padding: const EdgeInsets.only(right: 16),
+                child: Center(
+                    child: DropdownButton<int>(
+                        value: activeLocations
+                                .any((l) => l.id == currentLocationId)
+                            ? currentLocationId
+                            : activeLocations.first.id,
+                        dropdownColor: Theme.of(context).colorScheme.surface,
+                        underline: const SizedBox.shrink(),
+                        items: [
+                          for (final location in activeLocations)
+                            DropdownMenuItem(
+                                value: location.id, child: Text(location.name))
+                        ],
+                        onChanged: (selected) => setState(() =>
+                            currentLocationId =
+                                selected ?? currentLocationId)))),
+        ]),
         body: widget.compact
             ? pages[tab]
             : Row(children: [
@@ -193,22 +231,36 @@ class _SharedHomeState extends State<SharedHome> {
   Future<void> _addReading() async {
     final available = activeZones;
     if (available.isEmpty) {
-      _notify('Enable at least one zone on the Zones tab first.');
+      _notify('Enable at least one zone linked to this location first.');
       return;
     }
     final batch = await showDialog<List<MeterReading>>(
         context: context,
-        builder: (_) => _ReadingDialog(zones: available, readings: readings));
+        builder: (_) => _ReadingDialog(
+            zones: available,
+            locationId: currentLocationId,
+            readings: readings
+                .where((r) => r.locationId == currentLocationId)
+                .toList()));
     if (batch == null) return;
     await _saveReadings(batch);
   }
 
   Future<void> _editReading(MeterReading original) async {
-    final available = activeZones.isEmpty ? zones : activeZones;
+    final available = zonesAt(original.locationId).isEmpty
+        ? zones
+            .where((z) => z.locationIds.contains(original.locationId))
+            .toList()
+        : zonesAt(original.locationId);
     final batch = await showDialog<List<MeterReading>>(
         context: context,
         builder: (_) => _ReadingDialog(
-            zones: available, readings: readings, initial: original));
+            zones: available,
+            locationId: original.locationId,
+            readings: readings
+                .where((r) => r.locationId == original.locationId)
+                .toList(),
+            initial: original));
     if (batch == null) return;
     await _saveReading(batch.single);
   }
@@ -261,14 +313,17 @@ class _SharedHomeState extends State<SharedHome> {
   Future<void> _addZone() async {
     final zone = await showDialog<TariffZone>(
         context: context,
-        builder: (_) => _ZoneDialog(existing: zones, locations: locations));
+        builder: (_) => _ZoneDialog(
+            existing: zones,
+            locations: locations,
+            defaultLocationId: currentLocationId));
     if (zone == null) return;
     await _saveZone(widget.zoneRepository == null
         ? TariffZone(_nextId(zones.map((item) => item.id)), zone.code,
             zone.name, zone.kind,
             colorArgb: zone.colorArgb,
             sortOrder: zone.sortOrder,
-            locationId: zone.locationId)
+            locationIds: zone.locationIds)
         : zone);
   }
 
@@ -372,8 +427,9 @@ class _SharedHomeState extends State<SharedHome> {
   }
 
   Future<void> _deleteLocation(Location location) async {
-    if (zones.any((zone) => zone.locationId == location.id)) {
-      _notify('${location.name} still has zones — archive it instead.');
+    if (zones.any((zone) => zone.locationIds.contains(location.id))) {
+      _notify(
+          '${location.name} still has zones linked — unlink or archive it instead.');
       return;
     }
     final confirmed = await _confirm(
@@ -692,6 +748,7 @@ class ZonesView extends StatelessWidget {
   const ZonesView(
       {super.key,
       required this.zones,
+      this.locations = const [],
       required this.rates,
       required this.currencyCode,
       required this.onCurrencyChanged,
@@ -703,6 +760,7 @@ class ZonesView extends StatelessWidget {
       required this.onEditRate,
       required this.onDeleteRate});
   final List<TariffZone> zones;
+  final List<Location> locations;
   final List<TariffRate> rates;
   final String currencyCode;
   final ValueChanged<String> onCurrencyChanged;
@@ -749,6 +807,10 @@ class ZonesView extends StatelessWidget {
                 margin: const EdgeInsets.only(bottom: 12),
                 child: _ZoneTile(
                     zone: zone,
+                    locations: locations
+                        .where((location) =>
+                            zone.locationIds.contains(location.id))
+                        .toList(),
                     rates: rates
                         .where((rate) => rate.zoneId == zone.code.value)
                         .toList(),
@@ -765,6 +827,7 @@ class ZonesView extends StatelessWidget {
 class _ZoneTile extends StatelessWidget {
   const _ZoneTile(
       {required this.zone,
+      this.locations = const [],
       required this.rates,
       required this.onToggle,
       required this.onEdit,
@@ -773,6 +836,7 @@ class _ZoneTile extends StatelessWidget {
       required this.onEditRate,
       required this.onDeleteRate});
   final TariffZone zone;
+  final List<Location> locations;
   final List<TariffRate> rates;
   final VoidCallback onToggle;
   final VoidCallback onEdit;
@@ -791,8 +855,11 @@ class _ZoneTile extends StatelessWidget {
           child: Text(zone.name.isEmpty ? '?' : zone.name[0].toUpperCase(),
               style: const TextStyle(color: Colors.white))),
       title: Text(zone.name),
+      // Locations are only listed once a second one exists, so a
+      // single-location install keeps today's subtitle text unchanged.
       subtitle: Text(
-          '${zone.isArchived ? 'Archived' : 'Active'} • ${sorted.length} rate window${sorted.length == 1 ? '' : 's'}'),
+          '${zone.isArchived ? 'Archived' : 'Active'} • ${sorted.length} rate window${sorted.length == 1 ? '' : 's'}'
+          '${locations.length > 1 ? ' • ${locations.map((l) => l.name).join(', ')}' : ''}'),
       trailing: Row(mainAxisSize: MainAxisSize.min, children: [
         Semantics(
             label: '${zone.name} active',
@@ -893,7 +960,7 @@ class LocationsView extends StatelessWidget {
                             style: const TextStyle(color: Colors.white))),
                     title: Text(location.name),
                     subtitle: Text(
-                        '${location.isArchived ? 'Archived' : 'Active'} • ${zones.where((zone) => zone.locationId == location.id).length} zone(s)'),
+                        '${location.isArchived ? 'Archived' : 'Active'} • ${zones.where((zone) => zone.locationIds.contains(location.id)).length} zone(s) linked'),
                     trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                       Semantics(
                           label: '${location.name} active',
@@ -920,6 +987,7 @@ class StatsView extends StatefulWidget {
       required this.rates,
       required this.zones,
       this.locations = const [],
+      this.currentLocationId = 1,
       required this.range,
       required this.rangeKey,
       required this.currencyCode,
@@ -928,6 +996,7 @@ class StatsView extends StatefulWidget {
   final List<TariffRate> rates;
   final List<TariffZone> zones;
   final List<Location> locations;
+  final int currentLocationId;
   final DateRange range;
   final String rangeKey;
   final String currencyCode;
@@ -945,15 +1014,39 @@ class _StatsViewState extends State<StatsView> {
     final rates = widget.rates;
     final zones = widget.zones;
     final locations = widget.locations;
+    final currentLocationId = widget.currentLocationId;
     final range = widget.range;
     final rangeKey = widget.rangeKey;
     final currencyCode = widget.currencyCode;
     final onRangeChanged = widget.onRangeChanged;
     final calculator = ConsumptionCalculator();
-    final consumption = calculator
-        .deltas(readings)
-        .where((delta) => range.contains(delta.to))
-        .toList();
+    final activeLocations = locations.where((l) => !l.isArchived).toList()
+      ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+    // The scope switch only appears once a second location exists, so a
+    // single-location install keeps today's Stats tab visually unchanged.
+    final showLocationScope = locations.length > 1;
+    final showCombined = showLocationScope && combined;
+    // "Per zone" is scoped to the currently selected location so a zone
+    // shared across locations doesn't mix another location's data in;
+    // "Combined" spans every location, same as before.
+    final allDeltas = calculator.deltas(readings);
+    final scopedDeltas = showCombined
+        ? allDeltas
+        : allDeltas
+            .where((delta) => delta.locationId == currentLocationId)
+            .toList();
+    final scopedZones = showCombined
+        ? zones
+        : zones
+            .where((zone) => zone.locationIds.contains(currentLocationId))
+            .toList();
+    final scopedReadings = showCombined
+        ? readings
+        : readings
+            .where((reading) => reading.locationId == currentLocationId)
+            .toList();
+    final consumption =
+        scopedDeltas.where((delta) => range.contains(delta.to)).toList();
     final total =
         consumption.fold(0.0, (sum, delta) => sum + delta.consumption.value);
     final consumptionByZone = calculator.totalsByZone(consumption);
@@ -966,24 +1059,23 @@ class _StatsViewState extends State<StatsView> {
     final expenseByZone = ExpenseCalculator()
         .calculateByZone(consumption, rates, currencyCode: currencyCode);
     final granularity = calculator.granularityFor(range);
-    final buckets = calculator.bucketed(calculator.deltas(readings), range);
+    final buckets = calculator.bucketed(scopedDeltas, range);
+    final locationBuckets = showCombined
+        ? _bucketedByLocation(scopedDeltas, range, granularity)
+        : const <_LocationBucket>[];
     final averageDaily = range.days == 0 ? 0 : total / range.days;
     final dayKwh = consumptionByZone.entries
-        .where((entry) => _zoneFor(zones, entry.key)?.kind == ZoneKind.day)
+        .where(
+            (entry) => _zoneFor(scopedZones, entry.key)?.kind == ZoneKind.day)
         .fold(0.0, (sum, entry) => sum + entry.value.value);
     final nightKwh = consumptionByZone.entries
-        .where((entry) => _zoneFor(zones, entry.key)?.kind == ZoneKind.night)
+        .where(
+            (entry) => _zoneFor(scopedZones, entry.key)?.kind == ZoneKind.night)
         .fold(0.0, (sum, entry) => sum + entry.value.value);
     final dayNightTotal = dayKwh + nightKwh;
     final dayShare = dayNightTotal == 0 ? 0 : dayKwh / dayNightTotal;
-    final chartZones = _chartZones(zones, consumptionByZone.keys);
-    final warning = _reconcile(zones, consumptionByZone);
-    final activeLocations = locations.where((l) => !l.isArchived).toList()
-      ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
-    // The scope switch only appears once a second location exists, so a
-    // single-location install keeps today's Stats tab visually unchanged.
-    final showLocationScope = locations.length > 1;
-    final showCombined = showLocationScope && combined;
+    final chartZones = _chartZones(scopedZones, consumptionByZone.keys);
+    final warning = _reconcile(scopedZones, consumptionByZone);
     final excludedLocations = showCombined
         ? activeLocations
             .where((location) =>
@@ -1145,7 +1237,7 @@ class _StatsViewState extends State<StatsView> {
                                       getTitlesWidget: (value, meta) {
                                         final index = value.round();
                                         if (index < 0 ||
-                                            index >= buckets.length) {
+                                            index >= locationBuckets.length) {
                                           return const SizedBox.shrink();
                                         }
                                         return Padding(
@@ -1154,19 +1246,20 @@ class _StatsViewState extends State<StatsView> {
                                             child: Text(
                                                 _bucketLabel(
                                                     context,
-                                                    buckets[index].start,
+                                                    locationBuckets[index]
+                                                        .start,
                                                     granularity),
                                                 style: Theme.of(context)
                                                     .textTheme
                                                     .labelSmall));
                                       }))),
                           barGroups: [
-                            for (var i = 0; i < buckets.length; i++)
+                            for (var i = 0; i < locationBuckets.length; i++)
                               BarChartGroupData(x: i, barRods: [
                                 BarChartRodData(
-                                    toY: buckets[i].total.value,
+                                    toY: locationBuckets[i].total.value,
                                     rodStackItems: _locationStackItems(
-                                        buckets[i], zones, activeLocations),
+                                        locationBuckets[i], activeLocations),
                                     width: 18)
                               ]),
                           ]))))),
@@ -1277,7 +1370,7 @@ class _StatsViewState extends State<StatsView> {
                                                   .labelSmall))))),
                           lineBarsData: [
                             for (final zone in chartZones)
-                              _cumulativeLine(readings, zone),
+                              _cumulativeLine(scopedReadings, zone),
                           ]))))),
           for (final zone
               in zones.where((z) => deltasByZone.containsKey(z.code.value)))
@@ -1341,7 +1434,7 @@ List<BarChartRodStackItem> _stackItems(
 Kwh _locationConsumption(int locationId, List<TariffZone> zones,
     Map<String, Kwh> consumptionByZone) {
   final locationZones =
-      zones.where((zone) => zone.locationId == locationId).toList();
+      zones.where((zone) => zone.locationIds.contains(locationId)).toList();
   final selected = _chartZones(locationZones, consumptionByZone.keys);
   return selected.fold(Kwh(0),
       (sum, zone) => sum + (consumptionByZone[zone.code.value] ?? Kwh(0)));
@@ -1350,7 +1443,7 @@ Kwh _locationConsumption(int locationId, List<TariffZone> zones,
 Money _locationExpense(int locationId, List<TariffZone> zones,
     Map<String, Money> expenseByZone, String currencyCode) {
   final locationZones =
-      zones.where((zone) => zone.locationId == locationId).toList();
+      zones.where((zone) => zone.locationIds.contains(locationId)).toList();
   final selected = _chartZones(locationZones, expenseByZone.keys);
   return selected.fold(
       Money(0, currencyCode: currencyCode),
@@ -1366,7 +1459,7 @@ Money _locationExpense(int locationId, List<TariffZone> zones,
 bool _locationHasCurrency(int locationId, List<TariffZone> zones,
     List<TariffRate> rates, String currencyCode) {
   final zoneCodes = zones
-      .where((zone) => zone.locationId == locationId)
+      .where((zone) => zone.locationIds.contains(locationId))
       .map((zone) => zone.code.value)
       .toSet();
   return rates.any((rate) =>
@@ -1374,24 +1467,52 @@ bool _locationHasCurrency(int locationId, List<TariffZone> zones,
       rate.pricePerKwh.currencyCode == currencyCode);
 }
 
-Map<int, Kwh> _sumByLocation(Map<String, Kwh> byZone, List<TariffZone> zones) {
-  final locationOf = {
-    for (final zone in zones) zone.code.value: zone.locationId
-  };
-  final result = <int, Kwh>{};
-  for (final entry in byZone.entries) {
-    final locationId = locationOf[entry.key];
-    if (locationId == null) continue;
-    result[locationId] = (result[locationId] ?? Kwh(0)) + entry.value;
-  }
-  return result;
+/// Consumption grouped by location and date bucket, built directly from
+/// deltas (which already carry `locationId`) rather than from the
+/// zone-keyed [ConsumptionBucket]: a zone shared by more than one location
+/// would otherwise merge those locations' consumption under one zone code.
+class _LocationBucket {
+  const _LocationBucket(this.start, this.byLocation);
+  final DateTime start;
+  final Map<int, Kwh> byLocation;
+  Kwh get total => byLocation.values.fold(Kwh(0), (sum, value) => sum + value);
 }
 
-List<BarChartRodStackItem> _locationStackItems(ConsumptionBucket bucket,
-    List<TariffZone> zones, List<Location> locations) {
+List<_LocationBucket> _bucketedByLocation(Iterable<ConsumptionDelta> deltas,
+    DateRange range, ConsumptionGranularity granularity) {
+  final inRange = deltas.where((delta) => range.contains(delta.to));
+  final buckets = <DateTime, Map<int, Kwh>>{};
+  for (final delta in inRange) {
+    final start = _locationBucketStart(delta.to, granularity);
+    final values = buckets.putIfAbsent(start, () => <int, Kwh>{});
+    values[delta.locationId] =
+        (values[delta.locationId] ?? Kwh(0)) + delta.consumption;
+  }
+  final starts = buckets.keys.toList()..sort();
+  return [
+    for (final start in starts)
+      _LocationBucket(start, Map.unmodifiable(buckets[start]!)),
+  ];
+}
+
+DateTime _locationBucketStart(
+    DateTime date, ConsumptionGranularity granularity) {
+  final local = DateTime(date.year, date.month, date.day);
+  switch (granularity) {
+    case ConsumptionGranularity.day:
+      return local;
+    case ConsumptionGranularity.week:
+      return local.subtract(Duration(days: local.weekday - DateTime.monday));
+    case ConsumptionGranularity.month:
+      return DateTime(local.year, local.month);
+  }
+}
+
+List<BarChartRodStackItem> _locationStackItems(
+    _LocationBucket bucket, List<Location> locations) {
   var from = 0.0;
   return [
-    for (final entry in _sumByLocation(bucket.byZone, zones).entries)
+    for (final entry in bucket.byLocation.entries)
       if (entry.value.value > 0)
         BarChartRodStackItem(from, from += entry.value.value,
             Color(_locationFor(locations, entry.key)?.colorArgb ?? 0xff008577)),
@@ -1636,9 +1757,13 @@ class _EmptyState extends StatelessWidget {
 
 class _ReadingDialog extends StatefulWidget {
   const _ReadingDialog(
-      {required this.zones, required this.readings, this.initial});
+      {required this.zones,
+      required this.readings,
+      this.locationId = 1,
+      this.initial});
   final List<TariffZone> zones;
   final List<MeterReading> readings;
+  final int locationId;
   final MeterReading? initial;
   @override
   State<_ReadingDialog> createState() => _ReadingDialogState();
@@ -1746,7 +1871,8 @@ class _ReadingDialogState extends State<_ReadingDialog> {
           note: note.text.trim().isEmpty ? null : note.text.trim(),
           createdAt: widget.initial?.createdAt,
           updatedAt: DateTime.now(),
-          isReset: reset));
+          isReset: reset,
+          locationId: widget.initial?.locationId ?? widget.locationId));
     }
     Navigator.pop(context, entries);
   }
@@ -1866,9 +1992,13 @@ const _zonePalette = <int>[
 
 class _ZoneDialog extends StatefulWidget {
   const _ZoneDialog(
-      {required this.existing, this.locations = const [], this.initial});
+      {required this.existing,
+      this.locations = const [],
+      this.defaultLocationId = 1,
+      this.initial});
   final List<TariffZone> existing;
   final List<Location> locations;
+  final int defaultLocationId;
   final TariffZone? initial;
   @override
   State<_ZoneDialog> createState() => _ZoneDialogState();
@@ -1877,7 +2007,7 @@ class _ZoneDialog extends StatefulWidget {
 class _ZoneDialogState extends State<_ZoneDialog> {
   late final TextEditingController name;
   late int colorArgb;
-  late int locationId;
+  late Set<int> locationIds;
   String? error;
 
   @override
@@ -1886,10 +2016,9 @@ class _ZoneDialogState extends State<_ZoneDialog> {
     name = TextEditingController(text: widget.initial?.name ?? '');
     colorArgb = widget.initial?.colorArgb ??
         _zonePalette[widget.existing.length % _zonePalette.length];
-    final activeLocations =
-        widget.locations.where((location) => !location.isArchived).toList();
-    locationId = widget.initial?.locationId ??
-        (activeLocations.isEmpty ? 1 : activeLocations.first.id);
+    locationIds = {
+      ...(widget.initial?.locationIds ?? {widget.defaultLocationId})
+    };
   }
 
   @override
@@ -1904,12 +2033,16 @@ class _ZoneDialogState extends State<_ZoneDialog> {
       setState(() => error = 'Enter a zone name.');
       return;
     }
+    if (locationIds.isEmpty) {
+      setState(() => error = 'Link the zone to at least one location.');
+      return;
+    }
     final initial = widget.initial;
     if (initial != null) {
       Navigator.pop(
           context,
           initial.copyWith(
-              name: label, colorArgb: colorArgb, locationId: locationId));
+              name: label, colorArgb: colorArgb, locationIds: locationIds));
       return;
     }
     final slug = label
@@ -1929,7 +2062,7 @@ class _ZoneDialogState extends State<_ZoneDialog> {
         TariffZone(0, ZoneCode(slug), label, ZoneKind.custom,
             colorArgb: colorArgb,
             sortOrder: widget.existing.length,
-            locationId: locationId));
+            locationIds: locationIds));
   }
 
   @override
@@ -1944,23 +2077,29 @@ class _ZoneDialogState extends State<_ZoneDialog> {
                 textCapitalization: TextCapitalization.words,
                 decoration: const InputDecoration(labelText: 'Zone name')),
             // Only shown once a second location exists, so a single-location
-            // install keeps today's dialog layout unchanged.
+            // install keeps today's dialog layout unchanged. A zone (and its
+            // tariff rates) can be linked to more than one location instead
+            // of being duplicated.
             if (widget.locations.length > 1) ...[
               const SizedBox(height: 16),
-              InputDecorator(
-                  decoration: const InputDecoration(labelText: 'Location'),
-                  child: DropdownButtonHideUnderline(
-                      child: DropdownButton<int>(
-                          isExpanded: true,
-                          value: locationId,
-                          items: [
-                            for (final location in widget.locations)
-                              DropdownMenuItem(
-                                  value: location.id,
-                                  child: Text(location.name))
-                          ],
-                          onChanged: (selected) => setState(
-                              () => locationId = selected ?? locationId)))),
+              Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('Locations',
+                      style: Theme.of(context).textTheme.bodySmall)),
+              for (final location in widget.locations)
+                CheckboxListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    value: locationIds.contains(location.id),
+                    onChanged: (checked) => setState(() {
+                          if (checked ?? false) {
+                            locationIds.add(location.id);
+                          } else {
+                            locationIds.remove(location.id);
+                          }
+                        }),
+                    title: Text(location.name)),
             ],
             const SizedBox(height: 16),
             Align(

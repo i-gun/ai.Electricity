@@ -111,13 +111,15 @@ class Location {
 }
 
 class TariffZone {
-  // locationId defaults to 1 (the default "Home" location seeded by the
-  // schemaVersion-2 migration) so pre-ADR-0006 call sites keep working.
+  // locationIds defaults to {1} (the default "Home" location seeded by the
+  // schemaVersion-2 migration) so pre-multi-location call sites keep working.
+  // A zone (and its tariff rates) can be linked to more than one location, so
+  // it never needs to be duplicated just to reuse the same tariff elsewhere.
   const TariffZone(this.id, this.code, this.name, this.kind,
       {this.colorArgb = 0xff008577,
       this.sortOrder = 0,
       this.isArchived = false,
-      this.locationId = 1});
+      this.locationIds = const {1}});
   final int id;
   final ZoneCode code;
   final String name;
@@ -125,19 +127,19 @@ class TariffZone {
   final int colorArgb;
   final int sortOrder;
   final bool isArchived;
-  final int locationId;
+  final Set<int> locationIds;
 
   TariffZone copyWith(
           {String? name,
           int? colorArgb,
           int? sortOrder,
           bool? isArchived,
-          int? locationId}) =>
+          Set<int>? locationIds}) =>
       TariffZone(id, code, name ?? this.name, kind,
           colorArgb: colorArgb ?? this.colorArgb,
           sortOrder: sortOrder ?? this.sortOrder,
           isArchived: isArchived ?? this.isArchived,
-          locationId: locationId ?? this.locationId);
+          locationIds: locationIds ?? this.locationIds);
 }
 
 class TariffRate {
@@ -159,8 +161,15 @@ class TariffRate {
 }
 
 class MeterReading {
+  // locationId defaults to 1 (the default "Home" location) because a zone
+  // code shared across locations no longer uniquely identifies which
+  // location's meter a reading belongs to.
   const MeterReading(this.id, this.zoneId, this.readingDate, this.valueKwh,
-      {this.note, this.createdAt, this.updatedAt, this.isReset = false});
+      {this.note,
+      this.createdAt,
+      this.updatedAt,
+      this.isReset = false,
+      this.locationId = 1});
   final int id;
   final String zoneId;
   final DateTime readingDate;
@@ -169,6 +178,7 @@ class MeterReading {
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final bool isReset;
+  final int locationId;
 
   MeterReading copyWith(
           {int? id,
@@ -177,17 +187,19 @@ class MeterReading {
           Kwh? valueKwh,
           String? note,
           DateTime? updatedAt,
-          bool? isReset}) =>
+          bool? isReset,
+          int? locationId}) =>
       MeterReading(id ?? this.id, zoneId ?? this.zoneId,
           readingDate ?? this.readingDate, valueKwh ?? this.valueKwh,
           note: note ?? this.note,
           createdAt: createdAt,
           updatedAt: updatedAt ?? this.updatedAt,
-          isReset: isReset ?? this.isReset);
+          isReset: isReset ?? this.isReset,
+          locationId: locationId ?? this.locationId);
 }
 
 abstract interface class MeterReadingRepository {
-  Stream<List<MeterReading>> watchAll({String? zoneId});
+  Stream<List<MeterReading>> watchAll({String? zoneId, int? locationId});
   Future<MeterReading?> find(int id);
   Future<void> save(MeterReading reading);
   Future<void> delete(int id);
@@ -213,11 +225,13 @@ abstract interface class LocationRepository {
 }
 
 class ConsumptionDelta {
-  const ConsumptionDelta(this.from, this.to, this.consumption, this.zoneId);
+  const ConsumptionDelta(this.from, this.to, this.consumption, this.zoneId,
+      {this.locationId = 1});
   final DateTime from;
   final DateTime to;
   final Kwh consumption;
   final String zoneId;
+  final int locationId;
 }
 
 enum ConsumptionGranularity { day, week, month }
@@ -231,11 +245,16 @@ class ConsumptionBucket {
 }
 
 class ConsumptionCalculator {
-  /// Pairs are built per zone so interleaved multi-zone readings still match up.
+  /// Pairs are built per (location, zone) so interleaved multi-zone readings
+  /// still match up, and a zone shared across locations never pairs one
+  /// location's reading against another's.
   List<ConsumptionDelta> deltas(Iterable<MeterReading> source) {
     final byZone = <String, List<MeterReading>>{};
     for (final reading in source) {
-      byZone.putIfAbsent(reading.zoneId, () => <MeterReading>[]).add(reading);
+      byZone
+          .putIfAbsent('${reading.locationId}::${reading.zoneId}',
+              () => <MeterReading>[])
+          .add(reading);
     }
     final result = <ConsumptionDelta>[];
     for (final readings in byZone.values) {
@@ -246,7 +265,8 @@ class ConsumptionCalculator {
         if (current.isReset) continue;
         if (current.valueKwh.value >= previous.valueKwh.value) {
           result.add(ConsumptionDelta(previous.readingDate, current.readingDate,
-              current.valueKwh - previous.valueKwh, current.zoneId));
+              current.valueKwh - previous.valueKwh, current.zoneId,
+              locationId: current.locationId));
         }
       }
     }
@@ -263,18 +283,14 @@ class ConsumptionCalculator {
     return totals;
   }
 
-  /// Sums every zone's consumption into its owning location; zones with no
-  /// matching entry in [zones] (an unknown/removed zone code) are skipped.
-  Map<int, Kwh> totalsByLocation(
-      Iterable<ConsumptionDelta> deltas, Iterable<TariffZone> zones) {
-    final locationOf = {
-      for (final zone in zones) zone.code.value: zone.locationId
-    };
+  /// Naive per-location sum (mirrors [totalsByZone]); callers that must avoid
+  /// double-counting a location's "total" zone against its components should
+  /// pre-filter [deltas] to the relevant zones first, same as for [totalsByZone].
+  Map<int, Kwh> totalsByLocation(Iterable<ConsumptionDelta> deltas) {
     final totals = <int, Kwh>{};
-    for (final entry in totalsByZone(deltas).entries) {
-      final locationId = locationOf[entry.key];
-      if (locationId == null) continue;
-      totals[locationId] = (totals[locationId] ?? Kwh(0)) + entry.value;
+    for (final delta in deltas) {
+      totals[delta.locationId] =
+          (totals[delta.locationId] ?? Kwh(0)) + delta.consumption;
     }
     return totals;
   }
@@ -355,25 +371,23 @@ class ExpenseCalculator {
     };
   }
 
-  /// Sums each zone's expense into its owning location. `Money.+` already
-  /// throws on a currency mismatch, so mixed-currency locations surface as a
-  /// hard error rather than a silently wrong total (ADR 0006 Decision 5).
-  Map<int, Money> calculateByLocation(Iterable<ConsumptionDelta> deltas,
-      Iterable<TariffRate> rates, Iterable<TariffZone> zones,
+  /// Naive per-location sum (mirrors [calculateByZone]). `Money.+` throws on
+  /// a currency mismatch, so combining locations priced in different
+  /// currencies surfaces as a hard error rather than a silently wrong total
+  /// (ADR 0006 Decision 5) once callers stop pre-filtering by currency.
+  Map<int, Money> calculateByLocation(
+      Iterable<ConsumptionDelta> deltas, Iterable<TariffRate> rates,
       {String currencyCode = 'EUR'}) {
-    final locationOf = {
-      for (final zone in zones) zone.code.value: zone.locationId
-    };
-    final totals = <int, Money>{};
-    for (final entry
-        in calculateByZone(deltas, rates, currencyCode: currencyCode).entries) {
-      final locationId = locationOf[entry.key];
-      if (locationId == null) continue;
-      totals[locationId] =
-          (totals[locationId] ?? Money(0, currencyCode: currencyCode)) +
-              entry.value;
+    final grouped = <int, List<ConsumptionDelta>>{};
+    for (final delta in deltas) {
+      grouped
+          .putIfAbsent(delta.locationId, () => <ConsumptionDelta>[])
+          .add(delta);
     }
-    return totals;
+    return {
+      for (final entry in grouped.entries)
+        entry.key: calculate(entry.value, rates, currencyCode: currencyCode),
+    };
   }
 }
 
