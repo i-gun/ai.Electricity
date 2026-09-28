@@ -6,12 +6,42 @@ name: release (Version Control Agent)
 on:
   push:
     tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing SemVer tag to build and publish
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 jobs:
+  validate-release:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.validate.outputs.tag }}
+      sha: ${{ steps.validate.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate release tag
+        id: validate
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Expected a SemVer tag like v1.2.3, got: $RELEASE_TAG"
+            exit 1
+          fi
+          commit_sha=$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$commit_sha" >> "$GITHUB_OUTPUT"
+
   build-release-assets:
+    needs: validate-release
     strategy:
       fail-fast: false
       matrix:
@@ -28,7 +58,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ needs.validate-release.outputs.sha }}
           fetch-depth: 0
       - uses: subosito/flutter-action@v2
         with:
@@ -78,20 +108,33 @@ jobs:
               exit 1
               ;;
           esac
-      - name: Package release binary
+      - name: Package Windows release binary
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.validate-release.outputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path 'release-assets' | Out-Null
+          $archivePath = "release-assets/ai-electricity-windows-$env:VERSION.zip"
+          Compress-Archive `
+            -Path 'apps/desktop/build/windows/x64/runner/Release/*' `
+            -DestinationPath $archivePath `
+            -CompressionLevel Optimal
+          if (!(Test-Path -LiteralPath $archivePath) -or (Get-Item -LiteralPath $archivePath).Length -eq 0) {
+            throw "Windows release archive was not created: $archivePath"
+          }
+
+      - name: Package non-Windows release binary
+        if: matrix.platform != 'windows'
         shell: bash
         env:
           PLATFORM: ${{ matrix.platform }}
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ needs.validate-release.outputs.tag }}
         run: |
           set -euo pipefail
           mkdir -p release-assets
           case "$PLATFORM" in
-            windows)
-              cd apps/desktop/build/windows/x64/runner/Release
-              zip -r "$OLDPWD/release-assets/ai-electricity-windows-$VERSION.zip" .
-              cd "$OLDPWD"
-              ;;
             macos)
               app_path=$(find apps/desktop/build/macos/Build/Products/Release -name '*.app' -type d | head -1)
               if [ -z "$app_path" ]; then
@@ -123,7 +166,7 @@ jobs:
           retention-days: 7
 
   publish-release:
-    needs: build-release-assets
+    needs: [validate-release, build-release-assets]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -131,11 +174,29 @@ jobs:
           pattern: release-assets-*
           path: release-assets
           merge-multiple: true
+      - name: Verify complete release asset set
+        working-directory: release-assets
+        env:
+          TAG: ${{ needs.validate-release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          expected_assets=(
+            "ai-electricity-windows-$TAG.zip"
+            "ai-electricity-macos-$TAG.zip"
+            "ai-electricity-linux-$TAG.tar.gz"
+            "ai-electricity-android-$TAG.apk"
+          )
+          for asset in "${expected_assets[@]}"; do
+            if [[ ! -s "$asset" ]]; then
+              echo "Required release asset is missing or empty: $asset"
+              exit 1
+            fi
+          done
       - name: Generate checksums
         working-directory: release-assets
         env:
-          TAG: ${{ github.ref_name }}
-          COMMIT_SHA: ${{ github.sha }}
+          TAG: ${{ needs.validate-release.outputs.tag }}
+          COMMIT_SHA: ${{ needs.validate-release.outputs.sha }}
         run: |
           sha256sum * > SHA256SUMS
           jq -n --arg tag "$TAG" --arg commit "$COMMIT_SHA" \
@@ -144,7 +205,7 @@ jobs:
       - name: Create or update GitHub Release assets
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ needs.validate-release.outputs.tag }}
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release-assets/* --clobber
