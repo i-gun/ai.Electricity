@@ -31,7 +31,7 @@ permissions:
 
 jobs:
   preflight:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Reject unconfirmed or malformed dispatch before checkout
         id: validate
@@ -75,7 +75,7 @@ jobs:
           if [ -n "$failure" ]; then exit 1; fi
       - name: Upload preflight report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: code-build-preflight-${{ github.run_id }}
           path: logs/code-build-agent/${{ github.run_id }}.json
@@ -86,13 +86,13 @@ jobs:
 
   prepare:
     needs: preflight
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
       matrix: ${{ steps.normalize.outputs.matrix }}
       build_mode: ${{ steps.normalize.outputs.build_mode }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
@@ -132,9 +132,9 @@ jobs:
 
   quality:
     needs: prepare
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.sha }}
           fetch-depth: 1
@@ -177,7 +177,7 @@ jobs:
         include: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.sha }}
           fetch-depth: 1
@@ -307,7 +307,7 @@ jobs:
           with open('$report_dir/${{ github.run_id }}-${{ matrix.platform }}.json', 'w') as f:
               json.dump(report, f, indent=2)
           EOF
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: code-build-${{ matrix.platform }}-${{ needs.prepare.outputs.build_mode }}-${{ needs.prepare.outputs.sha }}
           path: artifact-staging
