@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   route:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Route feature/bug issues to Code Generation Agent
         if: contains(github.event.issue.labels.*.name, 'type:feature') || contains(github.event.issue.labels.*.name, 'type:bug')

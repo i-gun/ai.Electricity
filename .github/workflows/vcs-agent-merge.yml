@@ -22,11 +22,11 @@ permissions:
 
 jobs:
   merge-if-ready:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ secrets.VCS_AGENT_PR_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Resolve PR for this event
         id: pr
         run: |

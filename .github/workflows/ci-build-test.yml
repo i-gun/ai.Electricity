@@ -10,9 +10,9 @@ permissions:
 
 jobs:
   quality:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -52,17 +52,17 @@ jobs:
           cp ui/coverage/lcov.info coverage-artifacts/ui.lcov
           cp apps/desktop/coverage/lcov.info coverage-artifacts/desktop.lcov
           cp apps/mobile/coverage/lcov.info coverage-artifacts/mobile.lcov
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: coverage-packages
           path: coverage-artifacts
 
   coverage-gate:
     needs: quality
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: coverage-packages
           path: coverage-artifacts
@@ -83,11 +83,11 @@ jobs:
             target: macos
             directory: apps/desktop
             command: flutter build macos
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: linux
             directory: apps/desktop
             command: flutter build linux
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: android
             directory: apps/mobile
             command: flutter build apk --debug
@@ -97,7 +97,7 @@ jobs:
             command: flutter build ios --simulator --no-codesign
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
