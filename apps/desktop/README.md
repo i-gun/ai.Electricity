@@ -1,17 +1,43 @@
-# desktop
+# Desktop App
 
-A new Flutter project.
+The Windows, macOS, and Linux desktop shells use the shared `ui`, `data`, and
+`core` packages. Run package commands from the workspace root unless noted.
 
-## Getting Started
+## Local Release Builds
 
-This project is a starting point for a Flutter application.
+Resolve dependencies and generate Drift sources from the repository root:
 
-A few resources to get you started if this is your first Flutter project:
+```powershell
+dart pub get
+Push-Location data
+dart run build_runner build --delete-conflicting-outputs
+Pop-Location
+```
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+Build Windows from this directory:
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+```powershell
+flutter build windows --release
+```
+
+The runnable bundle is `build/windows/x64/runner/Release/`. Keep the complete
+directory together; `desktop.exe` depends on the adjacent Flutter DLL, plugins,
+and `data/` assets. No installer or code-signing step is configured.
+
+For account-sync testing, pass the public desktop OAuth client ID at build
+time. Do not use a client secret or commit a client ID tied to a developer
+account:
+
+```powershell
+flutter build windows --release `
+  --dart-define=GOOGLE_OAUTH_DESKTOP_CLIENT_ID=your-public-desktop-client-id
+```
+
+Without a configured client ID, the app still builds for offline/manual UI
+review, but Google sign-in and Drive sync are unavailable. Configure the
+matching desktop OAuth client in the Google Cloud project before testing sync.
+
+macOS and Linux use the same `GOOGLE_OAUTH_DESKTOP_CLIENT_ID` define and their
+respective `flutter build macos --release` and `flutter build linux --release`
+commands from this directory. Linux runtime requires Secret Service/libsecret
+for secure credential storage.

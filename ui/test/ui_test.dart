@@ -17,6 +17,162 @@ void main() {
     expect(find.byType(Placeholder), findsOneWidget);
   });
 
+  testWidgets('sync settings connect and disconnect Google account',
+      (tester) async {
+    var connected = false;
+    await tester.pumpWidget(MaterialApp(
+        home: SharedHome(
+            isGoogleConnected: () async => connected,
+            loadSyncConflicts: () async => const [
+                  SyncConflictItem(
+                      id: 'remote-change',
+                      entityKind: 'reading',
+                      entityId: 'stable-reading',
+                      reason:
+                          'A reading already exists for this location, zone and date',
+                      candidateSummaries: [
+                        'This device: 100.0 kWh on 2026-09-29',
+                        'Incoming: 130.0 kWh on 2026-09-29',
+                      ]),
+                ],
+            onGoogleConnect: () async {
+              connected = true;
+            },
+            onGoogleDisconnect: () async {
+              connected = false;
+            })));
+    await tester.tap(find.text('Sync'));
+    await tester.pumpAndSettle();
+    expect(find.text('Not connected'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Connect Google'));
+    await tester.pumpAndSettle();
+    expect(find.text('Google account connected'), findsOneWidget);
+    expect(
+        find.textContaining('Create a new vault or join one'), findsOneWidget);
+    expect(
+        find.widgetWithText(FilledButton, 'Disconnect Google'), findsOneWidget);
+    expect(find.textContaining('Conflicts to review'), findsOneWidget);
+    expect(find.textContaining('This device: 100.0 kWh'), findsOneWidget);
+    expect(find.textContaining('Incoming: 130.0 kWh'), findsOneWidget);
+    expect(find.textContaining('no value was overwritten'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Disconnect Google'));
+    await tester.pumpAndSettle();
+    expect(find.text('Not connected'), findsOneWidget);
+  });
+
+  testWidgets('recovery secret is cleared after vault creation',
+      (tester) async {
+    var vaultUnlocked = false;
+    String? submittedSecret;
+    await tester.pumpWidget(MaterialApp(
+        home: SharedHome(
+            isGoogleConnected: () async => true,
+            hasGoogleVault: () async => vaultUnlocked,
+            onGoogleCreateVault: (secret) async {
+              submittedSecret = secret;
+              vaultUnlocked = true;
+            },
+            onGoogleSyncNow: () async => const SyncRunSummary(
+                uploaded: 1,
+                applied: 2,
+                duplicates: 0,
+                conflicts: 1,
+                otherVault: 0))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sync'));
+    await tester.pumpAndSettle();
+    expect(find.text('Create vault'), findsOneWidget);
+    final secretField = find.widgetWithText(TextField, 'Recovery secret');
+    expect(tester.widget<TextField>(secretField).obscureText, isTrue);
+    await tester.enterText(secretField, 'temporary recovery phrase');
+    await tester.tap(find.text('Create vault'));
+    await tester.pumpAndSettle();
+
+    expect(submittedSecret, 'temporary recovery phrase');
+    expect(find.text('Recovery secret'), findsNothing);
+    expect(find.text('Sync now'), findsOneWidget);
+    await tester.tap(find.text('Sync now'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Uploaded 1, received 2, 1 conflicts'),
+        findsOneWidget);
+  });
+
+  testWidgets('eligible sync conflicts expose candidate resolution actions',
+      (tester) async {
+    String? resolvedId;
+    int? resolvedIndex;
+    await tester.pumpWidget(MaterialApp(
+        home: SharedHome(
+            isGoogleConnected: () async => true,
+            loadSyncConflicts: () async => const [
+                  SyncConflictItem(
+                      id: 'remote-branch',
+                      entityKind: 'reading',
+                      entityId: 'shared-reading',
+                      reason: 'Reading changed independently',
+                      candidateSummaries: [
+                        'This device: 100 kWh',
+                        'Incoming: 110 kWh',
+                      ],
+                      resolutionChoices: [
+                        'Use this device',
+                        'Use incoming',
+                      ]),
+                ],
+            onGoogleResolveConflict: (id, index) async {
+              resolvedId = id;
+              resolvedIndex = index;
+            })));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sync'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Use this device'), findsOneWidget);
+    expect(find.text('Use incoming'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('Use incoming'), 250,
+        scrollable: find.byType(Scrollable).last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Use incoming'));
+    await tester.pumpAndSettle();
+    expect(resolvedId, 'remote-branch');
+    expect(resolvedIndex, 1);
+  });
+
+  testWidgets('cross-ID conflicts clearly label the identity being kept',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+        home: SharedHome(
+            isGoogleConnected: () async => true,
+            loadSyncConflicts: () async => const [
+                  SyncConflictItem(
+                      id: 'duplicate-slot',
+                      entityKind: 'reading',
+                      entityId: 'incoming-reading-id',
+                      reason: 'A reading already exists in this slot',
+                      candidateSummaries: [
+                        'This device: 100 kWh',
+                        'Incoming: 110 kWh',
+                      ],
+                      resolutionChoices: [
+                        'Keep this device reading identity',
+                        'Merge into incoming reading identity',
+                      ]),
+                ],
+            onGoogleResolveConflict: (_, __) async {})));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sync'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+        find.text('Merge into incoming reading identity'), 250,
+        scrollable: find.byType(Scrollable).last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Keep this device reading identity'), findsOneWidget);
+    expect(find.text('Merge into incoming reading identity'), findsOneWidget);
+  });
+
   testWidgets('reading form exposes zone, date, label and reset fields',
       (tester) async {
     await tester.pumpWidget(const MaterialApp(home: SharedHome()));

@@ -5,6 +5,370 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+class SyncConflictItem {
+  const SyncConflictItem({
+    required this.id,
+    required this.entityKind,
+    required this.entityId,
+    required this.reason,
+    this.candidateSummaries = const [],
+    this.resolutionChoices = const [],
+  });
+
+  final String id;
+  final String entityKind;
+  final String entityId;
+  final String reason;
+  final List<String> candidateSummaries;
+  final List<String> resolutionChoices;
+}
+
+class SyncVaultChoice {
+  const SyncVaultChoice({required this.fileId, required this.vaultId});
+
+  final String fileId;
+  final String vaultId;
+}
+
+class SyncRunSummary {
+  const SyncRunSummary({
+    required this.uploaded,
+    required this.applied,
+    required this.duplicates,
+    required this.conflicts,
+    required this.otherVault,
+  });
+
+  final int uploaded;
+  final int applied;
+  final int duplicates;
+  final int conflicts;
+  final int otherVault;
+}
+
+class SyncSettingsView extends StatefulWidget {
+  const SyncSettingsView({
+    super.key,
+    this.isConnected,
+    this.hasUnlockedVault,
+    this.loadConflicts,
+    this.listVaults,
+    this.onConnect,
+    this.onReauthorize,
+    this.onDisconnect,
+    this.onCreateVault,
+    this.onUnlockVault,
+    this.onSyncNow,
+    this.onResolveConflict,
+  });
+
+  final Future<bool> Function()? isConnected;
+  final Future<bool> Function()? hasUnlockedVault;
+  final Future<List<SyncConflictItem>> Function()? loadConflicts;
+  final Future<List<SyncVaultChoice>> Function()? listVaults;
+  final Future<void> Function()? onConnect;
+  final Future<void> Function()? onReauthorize;
+  final Future<void> Function()? onDisconnect;
+  final Future<void> Function(String recoverySecret)? onCreateVault;
+  final Future<void> Function(String fileId, String recoverySecret)?
+      onUnlockVault;
+  final Future<SyncRunSummary> Function()? onSyncNow;
+  final Future<void> Function(String conflictId, int candidateIndex)?
+      onResolveConflict;
+
+  @override
+  State<SyncSettingsView> createState() => _SyncSettingsViewState();
+}
+
+class _SyncSettingsViewState extends State<SyncSettingsView> {
+  bool _connected = false;
+  bool _vaultUnlocked = false;
+  bool _busy = false;
+  String? _error;
+  String? _lastSync;
+  List<SyncConflictItem> _conflicts = const [];
+  final _recoverySecretController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadConnection();
+  }
+
+  @override
+  void dispose() {
+    _recoverySecretController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadConnection() async {
+    final check = widget.isConnected;
+    if (check != null) {
+      try {
+        final connected = await check();
+        if (mounted) setState(() => _connected = connected);
+      } on Exception {
+        if (mounted) {
+          setState(() => _error = 'Secure credential storage is unavailable.');
+        }
+      }
+    }
+    await _loadVaultState();
+    await _loadConflicts();
+  }
+
+  Future<void> _loadVaultState() async {
+    final check = widget.hasUnlockedVault;
+    if (check == null) return;
+    try {
+      final unlocked = await check();
+      if (mounted) setState(() => _vaultUnlocked = unlocked);
+    } on Exception {
+      if (mounted) setState(() => _error = 'Secure vault key is unavailable.');
+    }
+  }
+
+  Future<void> _loadConflicts() async {
+    final load = widget.loadConflicts;
+    if (load == null) return;
+    try {
+      final conflicts = await load();
+      if (mounted) setState(() => _conflicts = conflicts);
+    } on Exception {
+      if (mounted) setState(() => _error = 'Could not load saved conflicts.');
+    }
+  }
+
+  Future<void> _run(Future<void> Function()? action, bool connected) async {
+    if (action == null || _busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await action();
+      if (mounted) setState(() => _connected = connected);
+      if (!connected) setState(() => _vaultUnlocked = false);
+      await _loadVaultState();
+      await _loadConflicts();
+    } on Exception {
+      if (mounted) {
+        setState(() => _error = connected
+            ? 'Google connection failed. Check account, network, and app configuration.'
+            : 'Google disconnection failed.');
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _createVault() => _perform(() async {
+        final secret = _recoverySecretController.text;
+        await widget.onCreateVault!(secret);
+        _recoverySecretController.clear();
+        await _loadVaultState();
+      });
+
+  Future<void> _joinVault() => _perform(() async {
+        final discover = widget.listVaults;
+        if (discover == null || widget.onUnlockVault == null) return;
+        final vaults = await discover();
+        if (!mounted) return;
+        if (vaults.isEmpty) {
+          setState(() => _error =
+              'No encrypted vaults were found in this Google account.');
+          return;
+        }
+        final selected = await showDialog<SyncVaultChoice>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+                  title: const Text('Choose a vault'),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final vault in vaults)
+                        ListTile(
+                          title: Text('Vault ${vault.vaultId.substring(0, 8)}'),
+                          onTap: () => Navigator.pop(dialogContext, vault),
+                        ),
+                    ],
+                  ),
+                ));
+        if (selected == null || !mounted) return;
+        await widget.onUnlockVault!(
+            selected.fileId, _recoverySecretController.text);
+        _recoverySecretController.clear();
+        await _loadVaultState();
+      });
+
+  Future<void> _syncNow() => _perform(() async {
+        final action = widget.onSyncNow;
+        if (action == null) return;
+        final result = await action();
+        if (!mounted) return;
+        setState(() => _lastSync =
+            'Uploaded ${result.uploaded}, received ${result.applied}, '
+                '${result.conflicts} conflicts, ${result.duplicates} duplicates.');
+        await _loadConflicts();
+      });
+
+  Future<void> _perform(Future<void> Function() action) async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await action();
+    } on Exception {
+      if (mounted) {
+        setState(() => _error = 'The requested sync operation failed.');
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          Text('Google Drive', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 12),
+          Text(_connected ? 'Google account connected' : 'Not connected'),
+          const SizedBox(height: 8),
+          Text(!_connected
+              ? 'Connect a Google account to prepare Drive synchronization.'
+              : _vaultUnlocked
+                  ? 'Encrypted vault unlocked. Local changes can be synchronized.'
+                  : 'Create a new vault or join one to prepare synchronization.'),
+          const SizedBox(height: 20),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.icon(
+              onPressed: _busy
+                  ? null
+                  : () => _run(
+                      _connected ? widget.onDisconnect : widget.onConnect,
+                      !_connected),
+              icon: _busy
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : Icon(_connected ? Icons.link_off : Icons.login),
+              label: Text(_connected ? 'Disconnect Google' : 'Connect Google'),
+            ),
+          ),
+          if (_connected && !_vaultUnlocked) ...[
+            const SizedBox(height: 24),
+            Text('Encrypted vault',
+                style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _recoverySecretController,
+              obscureText: true,
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: const InputDecoration(
+                  labelText: 'Recovery secret',
+                  helperText: 'Use the same secret on each device.'),
+            ),
+            const SizedBox(height: 12),
+            Wrap(spacing: 12, runSpacing: 8, children: [
+              OutlinedButton.icon(
+                  onPressed: _busy || widget.onCreateVault == null
+                      ? null
+                      : _createVault,
+                  icon: const Icon(Icons.lock_open),
+                  label: const Text('Create vault')),
+              OutlinedButton.icon(
+                  onPressed: _busy ||
+                          widget.listVaults == null ||
+                          widget.onUnlockVault == null
+                      ? null
+                      : _joinVault,
+                  icon: const Icon(Icons.key),
+                  label: const Text('Join vault')),
+            ]),
+            const SizedBox(height: 8),
+            const Text(
+                'The recovery secret is not saved. Losing it and all unlocked devices means the vault cannot be recovered.'),
+          ],
+          if (_connected && _vaultUnlocked) ...[
+            const SizedBox(height: 20),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton.icon(
+                onPressed: _busy || widget.onSyncNow == null ? null : _syncNow,
+                icon: const Icon(Icons.sync),
+                label: const Text('Sync now'),
+              ),
+            ),
+            if (_lastSync != null) ...[
+              const SizedBox(height: 8),
+              Text(_lastSync!),
+            ],
+          ],
+          if (_connected && widget.onReauthorize != null) ...[
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _busy ? null : () => _perform(widget.onReauthorize!),
+                icon: const Icon(Icons.refresh),
+                label: const Text('Reauthorize Google'),
+              ),
+            ),
+          ],
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(_error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          ],
+          if (_conflicts.isNotEmpty) ...[
+            const SizedBox(height: 24),
+            Text('Conflicts to review',
+                style: Theme.of(context).textTheme.titleMedium),
+            for (final conflict in _conflicts)
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.warning_amber_outlined),
+                    title: Text('${conflict.entityKind}: ${conflict.reason}'),
+                    subtitle: Text([
+                      ...conflict.candidateSummaries,
+                      'Saved change ${conflict.id} (${conflict.entityId}); no value was overwritten.',
+                    ].join('\n')),
+                  ),
+                  if (conflict.resolutionChoices.isNotEmpty &&
+                      widget.onResolveConflict != null)
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        for (var index = 0;
+                            index < conflict.resolutionChoices.length;
+                            index++)
+                          TextButton(
+                            onPressed: _busy
+                                ? null
+                                : () => _perform(() async {
+                                      await widget.onResolveConflict!(
+                                          conflict.id, index);
+                                      await _loadConflicts();
+                                    }),
+                            child: Text(conflict.resolutionChoices[index]),
+                          ),
+                      ],
+                    ),
+                ],
+              ),
+          ],
+        ],
+      );
+}
+
 ThemeData lightTheme() => ThemeData(
     colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
     useMaterial3: true);
@@ -20,12 +384,36 @@ class SharedHome extends StatefulWidget {
       this.readingRepository,
       this.zoneRepository,
       this.rateRepository,
-      this.locationRepository});
+      this.locationRepository,
+      this.isGoogleConnected,
+      this.hasGoogleVault,
+      this.loadSyncConflicts,
+      this.listGoogleVaults,
+      this.onGoogleConnect,
+      this.onGoogleReauthorize,
+      this.onGoogleDisconnect,
+      this.onGoogleCreateVault,
+      this.onGoogleUnlockVault,
+      this.onGoogleSyncNow,
+      this.onGoogleResolveConflict});
   final bool compact;
   final MeterReadingRepository? readingRepository;
   final TariffZoneRepository? zoneRepository;
   final TariffRateRepository? rateRepository;
   final LocationRepository? locationRepository;
+  final Future<bool> Function()? isGoogleConnected;
+  final Future<bool> Function()? hasGoogleVault;
+  final Future<List<SyncConflictItem>> Function()? loadSyncConflicts;
+  final Future<List<SyncVaultChoice>> Function()? listGoogleVaults;
+  final Future<void> Function()? onGoogleConnect;
+  final Future<void> Function()? onGoogleReauthorize;
+  final Future<void> Function()? onGoogleDisconnect;
+  final Future<void> Function(String recoverySecret)? onGoogleCreateVault;
+  final Future<void> Function(String fileId, String recoverySecret)?
+      onGoogleUnlockVault;
+  final Future<SyncRunSummary> Function()? onGoogleSyncNow;
+  final Future<void> Function(String conflictId, int candidateIndex)?
+      onGoogleResolveConflict;
   @override
   State<SharedHome> createState() => _SharedHomeState();
 }
@@ -157,6 +545,18 @@ class _SharedHomeState extends State<SharedHome> {
                 range = r;
                 rangeKey = key;
               })),
+      SyncSettingsView(
+          isConnected: widget.isGoogleConnected,
+          hasUnlockedVault: widget.hasGoogleVault,
+          loadConflicts: widget.loadSyncConflicts,
+          listVaults: widget.listGoogleVaults,
+          onConnect: widget.onGoogleConnect,
+          onReauthorize: widget.onGoogleReauthorize,
+          onDisconnect: widget.onGoogleDisconnect,
+          onCreateVault: widget.onGoogleCreateVault,
+          onUnlockVault: widget.onGoogleUnlockVault,
+          onSyncNow: widget.onGoogleSyncNow,
+          onResolveConflict: widget.onGoogleResolveConflict),
     ];
     final activeLocations = locations.where((l) => !l.isArchived).toList()
       ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
@@ -203,7 +603,9 @@ class _SharedHomeState extends State<SharedHome> {
                           label: Text('Zones & tariffs')),
                       NavigationRailDestination(
                           icon: Icon(Icons.insights_outlined),
-                          label: Text('Stats'))
+                          label: Text('Stats')),
+                      NavigationRailDestination(
+                          icon: Icon(Icons.sync_outlined), label: Text('Sync'))
                     ]),
                 const VerticalDivider(width: 1),
                 Expanded(child: pages[tab])
@@ -220,7 +622,9 @@ class _SharedHomeState extends State<SharedHome> {
                     NavigationDestination(
                         icon: Icon(Icons.tune), label: 'Zones'),
                     NavigationDestination(
-                        icon: Icon(Icons.insights_outlined), label: 'Stats')
+                        icon: Icon(Icons.insights_outlined), label: 'Stats'),
+                    NavigationDestination(
+                        icon: Icon(Icons.sync_outlined), label: 'Sync')
                   ])
             : null,
         floatingActionButton: widget.compact && tab == 0

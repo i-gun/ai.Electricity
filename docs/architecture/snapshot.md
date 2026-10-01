@@ -13,9 +13,10 @@ Living summary the Advisory Agent maintains and the Code Generation Agent reads 
 
 - Stack: Flutter — see [`docs/adr/0001-cross-platform-stack-and-testing-strategy.md`](adr/0001-cross-platform-stack-and-testing-strategy.md).
 - Local storage (Drift over SQLite), domain model, and charting for the MVP — **accepted**, see [`docs/adr/0002-local-data-storage-and-visualization.md`](adr/0002-local-data-storage-and-visualization.md).
+- Encrypted Google Drive change-log sync — **accepted and under implementation**, see [`docs/adr/0007-google-drive-encrypted-sync.md`](adr/0007-google-drive-encrypted-sync.md). Local SQLite remains the source of truth; schema-v12 causal heads, bootstrap identities, encrypted transport, aliases, and conflict resolution are implemented, while live multi-platform verification and a few dependency-blocked conflicts remain open.
 
 ## Open items
 
 - Backlog ticket [`docs/backlog/mvp-001-meter-tracking.md`](../backlog/mvp-001-meter-tracking.md) is ready for the Code Generation Agent.
 - Backlog ticket [`docs/backlog/mvp-004-multi-location-support.md`](../backlog/mvp-004-multi-location-support.md) is ready for the Code Generation Agent — see [`docs/adr/0006-multi-location-support-and-combined-charts.md`](adr/0006-multi-location-support-and-combined-charts.md) (**accepted**).
-- Follow-up ADRs still owed: export/backup, cloud sync, OCR meter-photo entry.
+- Follow-up ADRs still owed: export/backup and OCR meter-photo entry.
