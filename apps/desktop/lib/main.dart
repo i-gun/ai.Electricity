@@ -35,9 +35,8 @@ void main() {
                   entityKind: conflict.entityKind,
                   entityId: conflict.entityId,
                   reason: conflict.reason,
-                    candidateSummaries: syncConflictCandidateSummaries(conflict),
-                    resolutionChoices:
-                      syncConflictResolutionChoices(conflict)),
+                  candidateSummaries: syncConflictCandidateSummaries(conflict),
+                  resolutionChoices: syncConflictResolutionChoices(conflict)),
           ],
       listGoogleVaults: () async => [
             for (final vault in await syncSession.discoverVaults())
@@ -69,8 +68,8 @@ void main() {
             duplicates: result.duplicates,
             conflicts: result.conflicts,
             otherVault: result.otherVault);
-          },
-          onGoogleResolveConflict: syncSession.resolveConflict));
+      },
+      onGoogleResolveConflict: syncSession.resolveConflict));
 }
 
 class DesktopApp extends StatelessWidget {

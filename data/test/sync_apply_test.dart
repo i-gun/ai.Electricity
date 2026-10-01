@@ -345,9 +345,9 @@ void main() {
         vault,
         envelope(rootChangeId, 'reading', entityId, {
           'locationId': firstHome.syncId,
-                    'zoneId': (await firstDb.select(firstDb.tariffZones).get())
-                            .firstWhere((zone) => zone.code == 'total')
-                            .syncId,
+          'zoneId': (await firstDb.select(firstDb.tariffZones).get())
+              .firstWhere((zone) => zone.code == 'total')
+              .syncId,
           'readingDate': date.toIso8601String(),
           'valueKwh': 100,
           'note': null,
