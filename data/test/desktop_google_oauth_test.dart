@@ -25,12 +25,16 @@ class OAuthMemoryBackend implements SecureCredentialBackend {
 }
 
 Future<void> _completeLoopback(Uri authorizationUri,
-    {String? code, String? error, String? stateOverride}) async {
+    {String? code,
+    String? error,
+    String? errorDescription,
+    String? stateOverride}) async {
   final redirect = Uri.parse(authorizationUri.queryParameters['redirect_uri']!);
   final callback = redirect.replace(queryParameters: {
     'state': stateOverride ?? authorizationUri.queryParameters['state']!,
     if (code != null) 'code': code,
     if (error != null) 'error': error,
+    if (errorDescription != null) 'error_description': errorDescription,
   });
   final client = HttpClient();
   try {
@@ -150,20 +154,25 @@ void main() {
     expect(await store.read(), isNull);
   });
 
-  test('redirect mismatch explains desktop loopback requirements', () async {
+  test('redirect mismatch includes Google diagnostic detail', () async {
     final store = SecureGoogleCredentialStore(OAuthMemoryBackend());
     final oauth = DesktopGoogleOAuth(
         clientId: 'desktop.apps.googleusercontent.com',
         credentials: store,
         openBrowser: (uri) async {
-          await _completeLoopback(uri, error: 'redirect_uri_mismatch');
+          await _completeLoopback(uri,
+              error: 'invalid_request',
+              errorDescription: 'Invalid parameter value for redirect_uri');
           return true;
         });
 
     await expectLater(
         oauth.signIn(),
-        throwsA(isA<GoogleOAuthException>().having((error) => error.reason,
-            'reason', contains('OAuth client type is Desktop app'))));
+        throwsA(isA<GoogleOAuthException>().having(
+            (error) => error.reason,
+            'reason',
+            allOf(contains('root loopback redirect'),
+                contains('Invalid parameter value for redirect_uri')))));
     expect(await store.read(), isNull);
   });
 
@@ -171,7 +180,7 @@ void main() {
       () async {
     final store = SecureGoogleCredentialStore(OAuthMemoryBackend());
     final client = MockClient((request) async => http.Response(
-        '{"error":"invalid_client","error_description":"private detail"}',
+        '{"error":"invalid_client","error_description":"invalid client; access_token=secret-value"}',
         401));
     final oauth = DesktopGoogleOAuth(
         clientId: 'desktop.apps.googleusercontent.com',
@@ -187,8 +196,8 @@ void main() {
         throwsA(isA<GoogleOAuthException>().having(
             (error) => error.reason,
             'reason',
-            allOf(contains('Desktop app client'),
-                isNot(contains('private detail'))))));
+            allOf(contains('Desktop app client'), contains('invalid client'),
+                isNot(contains('secret-value'))))));
     expect(await store.read(), isNull);
   });
 

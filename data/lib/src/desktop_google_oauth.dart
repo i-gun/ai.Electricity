@@ -93,7 +93,8 @@ class DesktopGoogleOAuth {
           await responseFuture.timeout(const Duration(minutes: 5));
       final callbackError = parameters['error'];
       if (callbackError != null) {
-        throw GoogleOAuthException(_googleOAuthFailure(callbackError));
+        throw GoogleOAuthException(_googleOAuthFailure(callbackError,
+            description: parameters['error_description']));
       }
       final code = parameters['code'];
       if (code == null || code.isEmpty) {
@@ -244,15 +245,18 @@ class DesktopGoogleOAuth {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final body = await _readBounded(response);
       Object? providerError;
+      Object? providerDescription;
       try {
         final decoded = jsonDecode(body);
         if (decoded is Map<String, dynamic>) {
           providerError = decoded['error'];
+          providerDescription = decoded['error_description'];
         }
       } on FormatException {
         // Provider response text is intentionally not surfaced to the user.
       }
-      throw GoogleOAuthException(_googleOAuthFailure(providerError));
+      throw GoogleOAuthException(
+          _googleOAuthFailure(providerError, description: providerDescription));
     }
     final body = await _readBounded(response);
     final decoded = jsonDecode(body);
@@ -262,9 +266,9 @@ class DesktopGoogleOAuth {
     return decoded;
   }
 
-  String _googleOAuthFailure(Object? providerError) {
+  String _googleOAuthFailure(Object? providerError, {Object? description}) {
     final code = providerError is String ? providerError : null;
-    return switch (code) {
+    final guidance = switch (code) {
       'access_denied' =>
         'Google access was denied. Accept the requested permissions; if the app is in Testing mode, add this account as a test user.',
       'invalid_client' =>
@@ -273,6 +277,8 @@ class DesktopGoogleOAuth {
         'This OAuth client is not authorized for the installed-app flow. Use a Desktop app client.',
       'redirect_uri_mismatch' =>
         'Google rejected the loopback redirect. Confirm the OAuth client type is Desktop app.',
+      'invalid_request' =>
+        'Google rejected the OAuth request. Verify the Desktop app client, root loopback redirect, Drive API, and consent-screen configuration.',
       'invalid_grant' =>
         'Google rejected the authorization code. Retry sign-in; verify the Desktop app client and loopback redirect.',
       'org_internal' =>
@@ -288,6 +294,24 @@ class DesktopGoogleOAuth {
       _ =>
         'Google authorization failed. Check the OAuth client type, consent-screen audience, and authorized test users.',
     };
+    final detail = _safeOAuthDescription(description);
+    return detail == null ? guidance : '$guidance Google detail: $detail';
+  }
+
+  String? _safeOAuthDescription(Object? description) {
+    if (description is! String || description.isEmpty) return null;
+    final sanitized = description
+        .replaceAll(RegExp(r'[\u0000-\u001f\u007f]'), ' ')
+        .replaceAll(
+            RegExp(
+                r'(authorization_code|access_token|refresh_token|client_secret|code_verifier)=([^&\s]+)',
+                caseSensitive: false),
+            r'$1=[redacted]')
+        .trim();
+    if (sanitized.isEmpty) return null;
+    return sanitized.length <= 240
+        ? sanitized
+        : '${sanitized.substring(0, 240)}...';
   }
 
   Future<String> _readBounded(http.StreamedResponse response) async {
