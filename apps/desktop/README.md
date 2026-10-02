@@ -48,6 +48,11 @@ redirect path or an embedded browser. A `redirect_uri_mismatch` message usually
 means the client is not a Desktop app client or the client ID belongs to a
 different Cloud project.
 
+If token exchange reports `client_secret is missing`, the supplied client ID
+is configured as a confidential client (commonly **Web application**). Create
+a new **Desktop app** OAuth client and rebuild with that client ID. Never add a
+Web application client secret to the Flutter executable.
+
 macOS and Linux use the same `GOOGLE_OAUTH_DESKTOP_CLIENT_ID` define and their
 respective `flutter build macos --release` and `flutter build linux --release`
 commands from this directory. Linux runtime requires Secret Service/libsecret
