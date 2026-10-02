@@ -201,6 +201,30 @@ void main() {
     expect(await store.read(), isNull);
   });
 
+  test('client-secret requirement directs users to a desktop client', () async {
+    final store = SecureGoogleCredentialStore(OAuthMemoryBackend());
+    final client = MockClient((request) async => http.Response(
+        '{"error":"invalid_request","error_description":"client_secret is missing"}',
+        400));
+    final oauth = DesktopGoogleOAuth(
+        clientId: 'desktop.apps.googleusercontent.com',
+        credentials: store,
+        httpClient: client,
+        openBrowser: (uri) async {
+          await _completeLoopback(uri, code: 'authorization-code');
+          return true;
+        });
+
+    await expectLater(
+        oauth.signIn(),
+        throwsA(isA<GoogleOAuthException>().having(
+            (error) => error.reason,
+            'reason',
+            allOf(contains('Desktop app OAuth client'),
+                contains('do not embed')))));
+    expect(await store.read(), isNull);
+  });
+
   test('oversized userinfo response is rejected without saving tokens',
       () async {
     final backend = OAuthMemoryBackend();

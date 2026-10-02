@@ -268,6 +268,11 @@ class DesktopGoogleOAuth {
 
   String _googleOAuthFailure(Object? providerError, {Object? description}) {
     final code = providerError is String ? providerError : null;
+    final detail = _safeOAuthDescription(description);
+    if (detail != null &&
+        detail.toLowerCase().contains('client_secret is missing')) {
+      return 'This OAuth client requires a client secret. Desktop apps must use a Desktop app OAuth client; do not embed a Web application client secret in the app.';
+    }
     final guidance = switch (code) {
       'access_denied' =>
         'Google access was denied. Accept the requested permissions; if the app is in Testing mode, add this account as a test user.',
@@ -294,7 +299,6 @@ class DesktopGoogleOAuth {
       _ =>
         'Google authorization failed. Check the OAuth client type, consent-screen audience, and authorized test users.',
     };
-    final detail = _safeOAuthDescription(description);
     return detail == null ? guidance : '$guidance Google detail: $detail';
   }
 
