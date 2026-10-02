@@ -37,6 +37,17 @@ Without a configured client ID, the app still builds for offline/manual UI
 review, but Google sign-in and Drive sync are unavailable. Configure the
 matching desktop OAuth client in the Google Cloud project before testing sync.
 
+## Google OAuth Setup
+
+Create an OAuth client with application type **Desktop app**, and use its client
+ID for `GOOGLE_OAUTH_DESKTOP_CLIENT_ID`. Enable the Google Drive API and include
+the account in the OAuth consent screen's test-user list while the app is in
+Testing mode. This flow opens the system browser and uses a root loopback
+redirect at `http://127.0.0.1:<ephemeral-port>`; it does not use a web-client
+redirect path or an embedded browser. A `redirect_uri_mismatch` message usually
+means the client is not a Desktop app client or the client ID belongs to a
+different Cloud project.
+
 macOS and Linux use the same `GOOGLE_OAUTH_DESKTOP_CLIENT_ID` define and their
 respective `flutter build macos --release` and `flutter build linux --release`
 commands from this directory. Linux runtime requires Secret Service/libsecret
