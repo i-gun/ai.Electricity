@@ -43,10 +43,18 @@ void main() {
               SyncVaultChoice(fileId: vault.fileId, vaultId: vault.vaultId),
           ],
       onGoogleConnect: () async {
-        await createOAuth().signIn();
+        try {
+          await createOAuth().signIn();
+        } on GoogleOAuthException catch (error) {
+          throw SyncUiException(error.reason);
+        }
       },
       onGoogleReauthorize: () async {
-        await createOAuth().signIn();
+        try {
+          await createOAuth().signIn();
+        } on GoogleOAuthException catch (error) {
+          throw SyncUiException(error.reason);
+        }
       },
       onGoogleDisconnect: () async {
         try {

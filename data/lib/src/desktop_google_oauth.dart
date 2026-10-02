@@ -50,7 +50,8 @@ class DesktopGoogleOAuth {
         _openBrowser = openBrowser ??
             ((uri) => launchUrl(uri, mode: LaunchMode.externalApplication)) {
     if (!clientId.endsWith('.apps.googleusercontent.com')) {
-      throw ArgumentError('A public Google OAuth client ID is required');
+      throw const GoogleOAuthException(
+          'Set GOOGLE_OAUTH_DESKTOP_CLIENT_ID to a public desktop client ID');
     }
   }
 

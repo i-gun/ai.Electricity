@@ -124,7 +124,7 @@ void main() {
 
     DesktopGoogleOAuth noClientId() => DesktopGoogleOAuth(
         clientId: 'not-a-google-client-id', credentials: store);
-    expect(noClientId, throwsArgumentError);
+    expect(noClientId, throwsA(isA<GoogleOAuthException>()));
   });
 
   test('oversized userinfo response is rejected without saving tokens',

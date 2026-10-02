@@ -46,6 +46,13 @@ class SyncRunSummary {
   final int otherVault;
 }
 
+/// Safe user-facing failure from a sync operation.
+class SyncUiException implements Exception {
+  const SyncUiException(this.message);
+
+  final String message;
+}
+
 class SyncSettingsView extends StatefulWidget {
   const SyncSettingsView({
     super.key,
@@ -151,11 +158,13 @@ class _SyncSettingsViewState extends State<SyncSettingsView> {
       if (!connected) setState(() => _vaultUnlocked = false);
       await _loadVaultState();
       await _loadConflicts();
-    } on Exception {
+    } on Exception catch (error) {
       if (mounted) {
-        setState(() => _error = connected
-            ? 'Google connection failed. Check account, network, and app configuration.'
-            : 'Google disconnection failed.');
+        setState(() => _error = error is SyncUiException
+            ? error.message
+            : connected
+                ? 'Google connection failed. Check account, network, and app configuration.'
+                : 'Google disconnection failed.');
       }
     } finally {
       if (mounted) setState(() => _busy = false);

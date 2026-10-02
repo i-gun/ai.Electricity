@@ -62,6 +62,28 @@ void main() {
     expect(find.text('Not connected'), findsOneWidget);
   });
 
+  testWidgets('sync settings presents safe OAuth setup failures',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+        home: SharedHome(
+            isGoogleConnected: () async => false,
+            onGoogleConnect: () async {
+              throw const SyncUiException(
+                  'Set GOOGLE_OAUTH_DESKTOP_CLIENT_ID to a public desktop client ID');
+            })));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sync'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Connect Google'));
+    await tester.pumpAndSettle();
+
+    expect(
+        find.text(
+            'Set GOOGLE_OAUTH_DESKTOP_CLIENT_ID to a public desktop client ID'),
+        findsOneWidget);
+    expect(find.text('Not connected'), findsOneWidget);
+  });
+
   testWidgets('recovery secret is cleared after vault creation',
       (tester) async {
     var vaultUnlocked = false;
