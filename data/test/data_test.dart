@@ -9,11 +9,180 @@ void main() {
     final database = ElectricityDatabase(NativeDatabase.memory());
     addTearDown(database.close);
 
-    expect(database.schemaVersion, 4);
+    expect(database.schemaVersion, 12);
     expect(await database.select(database.tariffZones).get(), hasLength(3));
     final seededLocations = await database.select(database.locations).get();
     expect(seededLocations, hasLength(1));
     expect(seededLocations.single.name, 'Home');
+    expect(
+        seededLocations.single.syncId, '00000000-0000-4000-8000-000000000001');
+    expect(
+        (await database.select(database.tariffZones).get())
+            .every((row) => row.syncId != null),
+        isTrue);
+  });
+
+  test('independent installations use the same built-in seed identities',
+      () async {
+    final first = ElectricityDatabase(NativeDatabase.memory());
+    final second = ElectricityDatabase(NativeDatabase.memory());
+    addTearDown(first.close);
+    addTearDown(second.close);
+
+    final firstLocation = (await first.select(first.locations).get()).single;
+    final secondLocation = (await second.select(second.locations).get()).single;
+    expect(firstLocation.syncId, secondLocation.syncId);
+
+    final firstZones = await first.select(first.tariffZones).get();
+    final secondZones = await second.select(second.tariffZones).get();
+    expect({for (final zone in firstZones) zone.code: zone.syncId},
+        {for (final zone in secondZones) zone.code: zone.syncId});
+  });
+
+  test('schema-v8 upgrades normalize exact seeds and adds sync history fields',
+      () async {
+    final executor = NativeDatabase.memory(setup: (db) {
+      db
+        ..execute('''
+          CREATE TABLE locations (
+            id INTEGER NOT NULL PRIMARY KEY,
+            sync_id TEXT NULL,
+            name TEXT NOT NULL,
+            color_argb INTEGER NOT NULL,
+            sort_order INTEGER NOT NULL,
+            is_archived INTEGER NOT NULL DEFAULT 0
+          );
+        ''')
+        ..execute('''
+          CREATE TABLE tariff_zones (
+            id INTEGER NOT NULL PRIMARY KEY,
+            sync_id TEXT NULL,
+            code TEXT NOT NULL,
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            color_argb INTEGER NOT NULL,
+            sort_order INTEGER NOT NULL,
+            is_archived INTEGER NOT NULL DEFAULT 0
+          );
+        ''')
+        ..execute('''
+          CREATE TABLE applied_sync_changes (
+            id TEXT NOT NULL PRIMARY KEY
+          );
+        ''')
+        ..execute("INSERT INTO locations VALUES (1, 'legacy-home', 'Home', "
+            '4278224247, 0, 0)')
+        ..execute("INSERT INTO locations VALUES (2, 'custom-home', 'Home', "
+            '123, 0, 0)')
+        ..execute("INSERT INTO tariff_zones VALUES "
+            "(1, 'legacy-total', 'total', 'Total', 'total', 4278224247, 0, 0)")
+        ..execute("INSERT INTO tariff_zones VALUES "
+            "(2, 'legacy-day', 'day', 'Day', 'day', 4294226944, 1, 1)")
+        ..execute("INSERT INTO tariff_zones VALUES "
+            "(3, 'legacy-night', 'night', 'Night', 'night', 4282549748, 2, 1)")
+        ..execute('PRAGMA user_version = 8');
+    });
+    final database = ElectricityDatabase(executor);
+    addTearDown(database.close);
+
+    final locations = await database.select(database.locations).get();
+    expect(locations.first.syncId, '00000000-0000-4000-8000-000000000001');
+    expect(locations.last.syncId, 'custom-home');
+    final zones = await database.select(database.tariffZones).get();
+    final night = zones.singleWhere((zone) => zone.code == 'night');
+    expect(night.name, 'Night');
+    expect(night.kind, 'night');
+    expect(night.colorArgb, 0xff4285f4);
+    expect(night.sortOrder, 2);
+    expect(night.isArchived, isTrue);
+    expect({
+      for (final zone in zones) zone.code: zone.syncId
+    }, {
+      'total': '00000000-0000-4000-8000-000000000002',
+      'day': '00000000-0000-4000-8000-000000000003',
+      'night': '00000000-0000-4000-8000-000000000004',
+    });
+    expect(await database.select(database.syncResolvedBranches).get(), isEmpty);
+    expect(await database.select(database.syncEntityAliases).get(), isEmpty);
+    final appliedColumns = await database
+        .customSelect("PRAGMA table_info('applied_sync_changes')")
+        .map((row) => row.read<String>('name'))
+        .get();
+    expect(appliedColumns, contains('parent_change_id'));
+  });
+
+  test('stable IDs survive edits across all four entity tables', () async {
+    final database = ElectricityDatabase(NativeDatabase.memory());
+    addTearDown(database.close);
+    final locations = DriftLocationRepository(database);
+    final zones = DriftTariffZoneRepository(database);
+    final rates = DriftTariffRateRepository(database);
+    final readings = DriftMeterReadingRepository(database);
+
+    await locations.save(const domain.Location(0, 'Cabin'));
+    expect(await database.select(database.locations).get(), hasLength(2));
+    expect(
+        await (database.select(database.locations)
+              ..where((row) => row.name.equals('Cabin')))
+            .get(),
+        hasLength(1));
+    final location = await (database.select(database.locations)
+          ..where((row) => row.name.equals('Cabin')))
+        .getSingle();
+    await locations.save(domain.Location(location.id, 'New cabin'));
+    expect(
+        (await (database.select(database.locations)
+                  ..where((row) => row.id.equals(location.id)))
+                .getSingle())
+            .syncId,
+        location.syncId);
+
+    await zones.save(domain.TariffZone(
+        0, domain.ZoneCode('custom'), 'Custom', domain.ZoneKind.custom));
+    expect(await database.select(database.tariffZones).get(), hasLength(4));
+    final zone = await (database.select(database.tariffZones)
+          ..where((row) => row.code.equals('custom')))
+        .getSingle();
+    await zones.save(domain.TariffZone(
+        zone.id, domain.ZoneCode('custom'), 'Renamed', domain.ZoneKind.custom));
+    expect(
+        (await (database.select(database.tariffZones)
+                  ..where((row) => row.id.equals(zone.id)))
+                .getSingle())
+            .syncId,
+        zone.syncId);
+
+    await rates
+        .save(domain.TariffRate(0, 'custom', domain.Money(20), DateTime(2026)));
+    expect(await database.select(database.tariffRates).get(), hasLength(1));
+    final rate = await (database.select(database.tariffRates)
+          ..where((row) => row.zoneId.equals('custom')))
+        .getSingle();
+    await rates.save(
+        domain.TariffRate(rate.id, 'custom', domain.Money(30), DateTime(2026)));
+    expect(
+        (await (database.select(database.tariffRates)
+                  ..where((row) => row.id.equals(rate.id)))
+                .getSingle())
+            .syncId,
+        rate.syncId);
+
+    await readings.save(
+        domain.MeterReading(0, 'custom', DateTime(2026), domain.Kwh(100)));
+    expect(await database.select(database.meterReadings).get(), hasLength(1));
+    final reading = await (database.select(database.meterReadings)
+          ..where((row) => row.zoneId.equals('custom')))
+        .getSingle();
+    await readings.save(domain.MeterReading(
+        reading.id, 'custom', DateTime(2026), domain.Kwh(105)));
+    expect(
+        (await (database.select(database.meterReadings)
+                  ..where((row) => row.id.equals(reading.id)))
+                .getSingle())
+            .syncId,
+        reading.syncId);
+    expect({location.syncId, zone.syncId, rate.syncId, reading.syncId},
+        hasLength(4));
   });
 
   test('every seeded zone links to the default Home location', () async {
@@ -176,6 +345,8 @@ void main() {
     final database = ElectricityDatabase(NativeDatabase.memory());
     addTearDown(database.close);
     final repository = DriftMeterReadingRepository(database);
+    await DriftLocationRepository(database)
+        .save(const domain.Location(2, 'Second location'));
 
     await repository.save(domain.MeterReading(
         0, 'total', DateTime(2026, 1, 1), domain.Kwh(100),
@@ -265,9 +436,23 @@ void main() {
     final database = ElectricityDatabase(executor);
     addTearDown(database.close);
     final repository = DriftMeterReadingRepository(database);
+    await DriftLocationRepository(database)
+        .save(const domain.Location(2, 'Second location'));
 
     // The pre-existing reading must survive the migration.
     expect(await repository.watchAll(locationId: 1).first, hasLength(1));
+    final migratedReading =
+        (await database.select(database.meterReadings).get()).single;
+    expect(migratedReading.syncId, isNotNull);
+    expect(migratedReading.valueKwh, 100);
+    expect(
+        (await (database.select(database.locations)
+                  ..where((row) => row.id.equals(1)))
+                .getSingle())
+            .syncId,
+        isNotNull);
+    expect((await database.select(database.tariffZones).get()).single.syncId,
+        isNotNull);
 
     // Two locations recording the same zone on the same new date must not
     // collide with the old UNIQUE(zone_id, reading_date) index.

@@ -23,6 +23,7 @@ Thumbs.db
 android/.gradle/
 android/local.properties
 ios/Pods/
+apps/mobile/ios/Flutter/Local.xcconfig
 ios/.symlinks/
 macos/Pods/
 linux/flutter/ephemeral/

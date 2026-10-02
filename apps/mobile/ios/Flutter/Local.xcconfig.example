@@ -1,0 +1,3 @@
+// Copy this file to Local.xcconfig and fill with your public iOS OAuth values.
+GOOGLE_OAUTH_CLIENT_ID =
+GOOGLE_OAUTH_REVERSED_CLIENT_ID =
