@@ -67,16 +67,12 @@ class DesktopGoogleOAuth {
   }
 
   Future<GoogleCredentials> signIn() async {
-    final callbackPath = '/oauth/${_base64Url(_randomBytes(18))}';
     final state = _base64Url(_randomBytes(32));
     final pkce = await createPkcePair();
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    final redirectUri = Uri(
-        scheme: 'http',
-        host: '127.0.0.1',
-        port: server.port,
-        path: callbackPath);
-    final responseFuture = _waitForCallback(server, callbackPath, state);
+    final redirectUri =
+        Uri(scheme: 'http', host: '127.0.0.1', port: server.port);
+    final responseFuture = _waitForCallback(server, '/', state);
     final authorizationUri =
         Uri.parse(_authorizationEndpoint).replace(queryParameters: {
       'client_id': clientId,
@@ -95,8 +91,9 @@ class DesktopGoogleOAuth {
       }
       final parameters =
           await responseFuture.timeout(const Duration(minutes: 5));
-      if (parameters['error'] != null) {
-        throw const GoogleOAuthException('Authorization was declined');
+      final callbackError = parameters['error'];
+      if (callbackError != null) {
+        throw GoogleOAuthException(_googleOAuthFailure(callbackError));
       }
       final code = parameters['code'];
       if (code == null || code.isEmpty) {
@@ -113,7 +110,8 @@ class DesktopGoogleOAuth {
       await credentials.write(credential);
       return credential;
     } on TimeoutException {
-      throw const GoogleOAuthException('Authorization timed out');
+      throw const GoogleOAuthException(
+          'Google did not return to the app. Verify the OAuth client is a Desktop app and retry sign-in.');
     } finally {
       await server.close(force: true);
     }
@@ -244,8 +242,17 @@ class DesktopGoogleOAuth {
       ..bodyFields = values;
     final response = await _httpClient.send(request);
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      await response.stream.drain<void>();
-      throw const GoogleOAuthException('Google authorization request failed');
+      final body = await _readBounded(response);
+      Object? providerError;
+      try {
+        final decoded = jsonDecode(body);
+        if (decoded is Map<String, dynamic>) {
+          providerError = decoded['error'];
+        }
+      } on FormatException {
+        // Provider response text is intentionally not surfaced to the user.
+      }
+      throw GoogleOAuthException(_googleOAuthFailure(providerError));
     }
     final body = await _readBounded(response);
     final decoded = jsonDecode(body);
@@ -253,6 +260,34 @@ class DesktopGoogleOAuth {
       throw const GoogleOAuthException('Invalid Google authorization response');
     }
     return decoded;
+  }
+
+  String _googleOAuthFailure(Object? providerError) {
+    final code = providerError is String ? providerError : null;
+    return switch (code) {
+      'access_denied' =>
+        'Google access was denied. Accept the requested permissions; if the app is in Testing mode, add this account as a test user.',
+      'invalid_client' =>
+        'Google rejected the OAuth client ID. Confirm it is a Desktop app client from the configured Google Cloud project.',
+      'unauthorized_client' =>
+        'This OAuth client is not authorized for the installed-app flow. Use a Desktop app client.',
+      'redirect_uri_mismatch' =>
+        'Google rejected the loopback redirect. Confirm the OAuth client type is Desktop app.',
+      'invalid_grant' =>
+        'Google rejected the authorization code. Retry sign-in; verify the Desktop app client and loopback redirect.',
+      'org_internal' =>
+        'This OAuth app is limited to its organization. Sign in with an account in that organization or update the app audience.',
+      'temporarily_unavailable' ||
+      'server_error' =>
+        'Google authorization is temporarily unavailable. Try again shortly.',
+      _
+          when code != null &&
+              code.length <= 64 &&
+              RegExp(r'^[a-zA-Z0-9_-]+$').hasMatch(code) =>
+        'Google authorization failed (OAuth error: $code). Check the OAuth client type and consent-screen audience.',
+      _ =>
+        'Google authorization failed. Check the OAuth client type, consent-screen audience, and authorized test users.',
+    };
   }
 
   Future<String> _readBounded(http.StreamedResponse response) async {

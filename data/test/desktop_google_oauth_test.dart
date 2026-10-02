@@ -25,11 +25,12 @@ class OAuthMemoryBackend implements SecureCredentialBackend {
 }
 
 Future<void> _completeLoopback(Uri authorizationUri,
-    {required String code, String? stateOverride}) async {
+    {String? code, String? error, String? stateOverride}) async {
   final redirect = Uri.parse(authorizationUri.queryParameters['redirect_uri']!);
   final callback = redirect.replace(queryParameters: {
     'state': stateOverride ?? authorizationUri.queryParameters['state']!,
-    'code': code,
+    if (code != null) 'code': code,
+    if (error != null) 'error': error,
   });
   final client = HttpClient();
   try {
@@ -91,6 +92,7 @@ void main() {
         final redirect = Uri.parse(uri.queryParameters['redirect_uri']!);
         expect(redirect.host, '127.0.0.1');
         expect(redirect.scheme, 'http');
+        expect(redirect.path, isEmpty);
         await _completeLoopback(uri, code: 'authorization-code');
         return true;
       },
@@ -125,6 +127,69 @@ void main() {
     DesktopGoogleOAuth noClientId() => DesktopGoogleOAuth(
         clientId: 'not-a-google-client-id', credentials: store);
     expect(noClientId, throwsA(isA<GoogleOAuthException>()));
+  });
+
+  test('consent denial explains test-user setup without exposing provider text',
+      () async {
+    final store = SecureGoogleCredentialStore(OAuthMemoryBackend());
+    final oauth = DesktopGoogleOAuth(
+        clientId: 'desktop.apps.googleusercontent.com',
+        credentials: store,
+        openBrowser: (uri) async {
+          await _completeLoopback(uri, error: 'access_denied');
+          return true;
+        });
+
+    await expectLater(
+        oauth.signIn(),
+        throwsA(isA<GoogleOAuthException>().having(
+            (error) => error.reason,
+            'reason',
+            allOf(contains('Testing mode'),
+                isNot(contains('error_description'))))));
+    expect(await store.read(), isNull);
+  });
+
+  test('redirect mismatch explains desktop loopback requirements', () async {
+    final store = SecureGoogleCredentialStore(OAuthMemoryBackend());
+    final oauth = DesktopGoogleOAuth(
+        clientId: 'desktop.apps.googleusercontent.com',
+        credentials: store,
+        openBrowser: (uri) async {
+          await _completeLoopback(uri, error: 'redirect_uri_mismatch');
+          return true;
+        });
+
+    await expectLater(
+        oauth.signIn(),
+        throwsA(isA<GoogleOAuthException>().having((error) => error.reason,
+            'reason', contains('OAuth client type is Desktop app'))));
+    expect(await store.read(), isNull);
+  });
+
+  test('invalid OAuth client error gives desktop-client guidance only',
+      () async {
+    final store = SecureGoogleCredentialStore(OAuthMemoryBackend());
+    final client = MockClient((request) async => http.Response(
+        '{"error":"invalid_client","error_description":"private detail"}',
+        401));
+    final oauth = DesktopGoogleOAuth(
+        clientId: 'desktop.apps.googleusercontent.com',
+        credentials: store,
+        httpClient: client,
+        openBrowser: (uri) async {
+          await _completeLoopback(uri, code: 'authorization-code');
+          return true;
+        });
+
+    await expectLater(
+        oauth.signIn(),
+        throwsA(isA<GoogleOAuthException>().having(
+            (error) => error.reason,
+            'reason',
+            allOf(contains('Desktop app client'),
+                isNot(contains('private detail'))))));
+    expect(await store.read(), isNull);
   });
 
   test('oversized userinfo response is rejected without saving tokens',
