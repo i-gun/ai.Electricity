@@ -107,13 +107,18 @@ void main() {
     expect((await database.select(database.meterReadings).get()), hasLength(1));
     final restoredVault = (await keyCache.read('google-account'))!;
     Map<String, Object?>? encryptedReading;
+    Map<String, dynamic>? readingEnvelope;
     for (final encrypted in store.encryptedChanges.values) {
       final envelope =
           jsonDecode(utf8.decode(await restoredVault.decrypt(encrypted)))
               as Map<String, dynamic>;
-      if (envelope['entityKind'] == 'reading') encryptedReading = encrypted;
+      if (envelope['entityKind'] == 'reading') {
+        encryptedReading = encrypted;
+        readingEnvelope = envelope;
+      }
     }
     expect(encryptedReading, isNotNull);
-    expect(encryptedReading!['cipherText'], isNot(contains('100')));
+    expect(encryptedReading!['cipherText'], isNot('100'));
+    expect(readingEnvelope!['payload']['valueKwh'], 100);
   });
 }

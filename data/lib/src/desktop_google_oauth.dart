@@ -20,9 +20,10 @@ const _maxOAuthResponseBytes = 65536;
 
 /// Sanitized authentication error; never contains provider response bodies.
 class GoogleOAuthException implements Exception {
-  const GoogleOAuthException(this.reason);
+  const GoogleOAuthException(this.reason, {this.oauthErrorCode});
 
   final String reason;
+  final String? oauthErrorCode;
 
   @override
   String toString() => 'GoogleOAuthException: $reason';
@@ -38,12 +39,13 @@ class PkcePair {
 
 /// Desktop Google OAuth using an external browser and a loopback callback.
 ///
-/// Supply the public desktop OAuth client ID from build/runtime configuration.
-/// No client secret is accepted or persisted by this class.
+/// Supply the Desktop client ID and optional public, extractable client secret
+/// from build configuration. The secret is never persisted by this class.
 class DesktopGoogleOAuth {
   DesktopGoogleOAuth({
     required this.clientId,
     required this.credentials,
+    this.clientSecret,
     http.Client? httpClient,
     Future<bool> Function(Uri)? openBrowser,
   })  : _httpClient = httpClient ?? http.Client(),
@@ -56,6 +58,7 @@ class DesktopGoogleOAuth {
   }
 
   final String clientId;
+  final String? clientSecret;
   final SecureGoogleCredentialStore credentials;
   final http.Client _httpClient;
   final Future<bool> Function(Uri) _openBrowser;
@@ -102,6 +105,8 @@ class DesktopGoogleOAuth {
       }
       final tokenJson = await _postForm(_tokenEndpoint, {
         'client_id': clientId,
+        if (clientSecret != null && clientSecret!.isNotEmpty)
+          'client_secret': clientSecret!,
         'code': code,
         'code_verifier': pkce.verifier,
         'grant_type': 'authorization_code',
@@ -130,11 +135,21 @@ class DesktopGoogleOAuth {
       throw const GoogleOAuthException(
           'Native Google authorization requires user interaction');
     }
-    final tokenJson = await _postForm(_tokenEndpoint, {
-      'client_id': clientId,
-      'refresh_token': refreshToken,
-      'grant_type': 'refresh_token',
-    });
+    late final Map<String, Object?> tokenJson;
+    try {
+      tokenJson = await _postForm(_tokenEndpoint, {
+        'client_id': clientId,
+        if (clientSecret != null && clientSecret!.isNotEmpty)
+          'client_secret': clientSecret!,
+        'refresh_token': refreshToken,
+        'grant_type': 'refresh_token',
+      });
+    } on GoogleOAuthException catch (error) {
+      if (error.oauthErrorCode == 'invalid_grant') {
+        await credentials.delete();
+      }
+      rethrow;
+    }
     final access = tokenJson['access_token'];
     final expiresIn = tokenJson['expires_in'];
     if (access is! String ||
@@ -256,7 +271,8 @@ class DesktopGoogleOAuth {
         // Provider response text is intentionally not surfaced to the user.
       }
       throw GoogleOAuthException(
-          _googleOAuthFailure(providerError, description: providerDescription));
+          _googleOAuthFailure(providerError, description: providerDescription),
+          oauthErrorCode: providerError is String ? providerError : null);
     }
     final body = await _readBounded(response);
     final decoded = jsonDecode(body);
@@ -271,7 +287,7 @@ class DesktopGoogleOAuth {
     final detail = _safeOAuthDescription(description);
     if (detail != null &&
         detail.toLowerCase().contains('client_secret is missing')) {
-      return 'This OAuth client requires a client secret. Desktop apps must use a Desktop app OAuth client; do not embed a Web application client secret in the app.';
+      return 'Google requires a client secret for this OAuth client. Configure the matching Desktop app client secret at release build time; it is public and extractable. Do not use a Web application client secret.';
     }
     final guidance = switch (code) {
       'access_denied' =>

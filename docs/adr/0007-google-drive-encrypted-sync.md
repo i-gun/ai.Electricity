@@ -91,8 +91,13 @@ be presented as a finished sync feature.
 - Google authorization uses an installed/native app flow with PKCE S256,
   validated state, system browser or approved native SDK and supported platform
   redirects. Desktop loopback is restricted to `127.0.0.1` for the OAuth
-  callback only; it is not a remote plaintext connection. Do not ship a client
-  secret, service-account key or password in any app.
+  callback only; it is not a remote plaintext connection. Android and iOS use
+  the Google Sign-In SDK and do not receive a client secret. The Desktop OAuth
+  client may require its matching `client_secret` during direct code exchange
+  and refresh. This value is bundled as public, extractable client
+  configuration, not treated as confidential and not relied on as a security
+  boundary. Never ship a Web application client secret, service-account key,
+  Google password or user credential in the app.
 - Persist tokens and any optional unlocked vault key only in an OS-backed
   encrypted secret store. Review Keychain entitlements, Android Keystore and
   backup exclusions, Windows protected storage and Linux Secret Service
@@ -148,7 +153,9 @@ OAuth client IDs are public identifiers, not secrets, but must be supplied by
 the release environment rather than committed as user/project-specific values:
 
 - Desktop Windows/Linux/macOS: `GOOGLE_OAUTH_DESKTOP_CLIENT_ID` via Dart
-  `--dart-define`.
+  `--dart-define`, and the matching `GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET` via
+  Dart `--dart-define`. The client secret is public/extractable in the
+  distributed app; source repositories and logs must not contain its value.
 - Android: `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_WEB_CLIENT_ID` via Dart
   `--dart-define`, plus the Android package name and signing certificate SHA
   registered in Google Cloud.
@@ -156,7 +163,11 @@ the release environment rather than committed as user/project-specific values:
   client ID registered as a URL scheme in the Runner target. Google Sign-In
   also has App Store account-login requirements to review before release.
 
-Desktop publishes changes with a refresh token stored in secure storage.
+Desktop publishes changes with a refresh token stored in OS-backed secure
+storage. Secret-only rotation retains the OAuth client ID; verify refresh of
+existing tokens with the replacement secret before retiring the old value.
+Changing the client ID requires reauthorization and a cross-client Drive
+appDataFolder access smoke; do not assume existing remote files remain visible.
 The native Android/iOS Google Sign-In SDK currently exposes access tokens only
 to this Flutter plugin; it obtains renewed tokens through the SDK when possible
 and requires foreground reauthorization otherwise. Do not assume native

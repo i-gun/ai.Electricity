@@ -221,23 +221,35 @@ jobs:
         env:
           PLATFORM: ${{ matrix.platform }}
           MODE: ${{ needs.prepare.outputs.build_mode }}
+          GOOGLE_OAUTH_DESKTOP_CLIENT_ID: ${{ contains(fromJSON('["windows","macos","linux"]'), matrix.platform) && vars['GOOGLE_OAUTH_DESKTOP_CLIENT_ID'] || '' }}
+          GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET: ${{ contains(fromJSON('["windows","macos","linux"]'), matrix.platform) && secrets['GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET'] || '' }}
         run: |
           set -euo pipefail
           mode_flag="--$MODE"
+          oauth_defines=()
+          if [[ "$PLATFORM" == "windows" || "$PLATFORM" == "macos" || "$PLATFORM" == "linux" ]]; then
+            if [[ -n "${GOOGLE_OAUTH_DESKTOP_CLIENT_ID:-}" && -n "${GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET:-}" ]]; then
+              oauth_defines+=(--dart-define="GOOGLE_OAUTH_DESKTOP_CLIENT_ID=$GOOGLE_OAUTH_DESKTOP_CLIENT_ID")
+              oauth_defines+=(--dart-define="GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET=$GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET")
+            elif [[ -n "${GOOGLE_OAUTH_DESKTOP_CLIENT_ID:-}" || -n "${GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET:-}" ]]; then
+              echo 'Configure both GOOGLE_OAUTH_DESKTOP_CLIENT_ID and GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET, or neither.'
+              exit 1
+            fi
+          fi
           case "$PLATFORM" in
             windows)
               cd apps/desktop
-              flutter build windows $mode_flag
+              flutter build windows $mode_flag "${oauth_defines[@]}"
               cd ../..
               ;;
             macos)
               cd apps/desktop
-              flutter build macos $mode_flag
+              flutter build macos $mode_flag "${oauth_defines[@]}"
               cd ../..
               ;;
             linux)
               cd apps/desktop
-              flutter build linux $mode_flag
+              flutter build linux $mode_flag "${oauth_defines[@]}"
               cd ../..
               ;;
             android)
