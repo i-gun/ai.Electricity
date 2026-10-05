@@ -66,7 +66,7 @@ void main() {
         expect(request.url.path, '/token');
         expect(request.bodyFields['client_id'],
             'desktop.apps.googleusercontent.com');
-        expect(request.bodyFields.containsKey('client_secret'), isFalse);
+        expect(request.bodyFields['client_secret'], 'desktop-test-secret');
         expect(request.bodyFields['grant_type'], 'authorization_code');
         expect(request.bodyFields['code_verifier'], isNotEmpty);
         return http.Response(
@@ -79,16 +79,19 @@ void main() {
             200);
       }
       expect(request.url.host, 'openidconnect.googleapis.com');
+      expect(request.url.queryParameters.containsKey('client_secret'), isFalse);
       expect(request.headers['Authorization'], 'Bearer access-token');
       return http.Response('{"sub":"stable-account-subject"}', 200);
     });
     final oauth = DesktopGoogleOAuth(
       clientId: 'desktop.apps.googleusercontent.com',
+      clientSecret: 'desktop-test-secret',
       credentials: store,
       httpClient: httpClient,
       openBrowser: (uri) async {
         expect(uri.scheme, 'https');
         expect(uri.host, 'accounts.google.com');
+        expect(uri.queryParameters.containsKey('client_secret'), isFalse);
         expect(uri.queryParameters['scope'],
             'openid https://www.googleapis.com/auth/drive.appdata');
         expect(uri.queryParameters['access_type'], 'offline');
@@ -107,6 +110,7 @@ void main() {
     expect(credentials.refreshToken, 'refresh-token');
     expect(credentials.accountSubject, 'stable-account-subject');
     expect(await store.read(), isNotNull);
+    expect(backend.value, isNot(contains('desktop-test-secret')));
   });
 
   test('invalid state, rejected scopes, and failed OAuth requests do not save',
@@ -201,6 +205,30 @@ void main() {
     expect(await store.read(), isNull);
   });
 
+  test('client-secret requirement directs users to a desktop client', () async {
+    final store = SecureGoogleCredentialStore(OAuthMemoryBackend());
+    final client = MockClient((request) async => http.Response(
+        '{"error":"invalid_request","error_description":"client_secret is missing"}',
+        400));
+    final oauth = DesktopGoogleOAuth(
+        clientId: 'desktop.apps.googleusercontent.com',
+        credentials: store,
+        httpClient: client,
+        openBrowser: (uri) async {
+          await _completeLoopback(uri, code: 'authorization-code');
+          return true;
+        });
+
+    await expectLater(
+        oauth.signIn(),
+        throwsA(isA<GoogleOAuthException>().having(
+            (error) => error.reason,
+            'reason',
+            allOf(
+                contains('Desktop app'), contains('public and extractable')))));
+    expect(await store.read(), isNull);
+  });
+
   test('oversized userinfo response is rejected without saving tokens',
       () async {
     final backend = OAuthMemoryBackend();
@@ -244,6 +272,7 @@ void main() {
       if (request.url.path == '/token') {
         expect(request.bodyFields['grant_type'], 'refresh_token');
         expect(request.bodyFields['refresh_token'], 'saved-refresh');
+        expect(request.bodyFields['client_secret'], 'desktop-test-secret');
         return http.Response(
             '{"access_token":"fresh-access","expires_in":1800}', 200);
       }
@@ -254,6 +283,7 @@ void main() {
     });
     final oauth = DesktopGoogleOAuth(
         clientId: 'desktop.apps.googleusercontent.com',
+        clientSecret: 'desktop-test-secret',
         credentials: store,
         httpClient: client);
     expect(await oauth.accessToken(now: DateTime.utc(2026)), 'fresh-access');
@@ -261,5 +291,87 @@ void main() {
     await oauth.disconnect();
     expect(revoked, isTrue);
     expect(await store.read(), isNull);
+  });
+
+  test('rotated Desktop client secret refreshes existing credentials',
+      () async {
+    final backend = OAuthMemoryBackend();
+    final store = SecureGoogleCredentialStore(backend);
+    await store.write(GoogleCredentials(
+        accessToken: 'old-access',
+        refreshToken: 'existing-refresh',
+        expiresAt: DateTime.utc(2020),
+        accountSubject: 'account'));
+    final client = MockClient((request) async {
+      expect(request.url.host, 'oauth2.googleapis.com');
+      expect(request.bodyFields['client_id'],
+          'desktop.apps.googleusercontent.com');
+      expect(request.bodyFields['client_secret'], 'rotated-client-secret');
+      expect(request.bodyFields['refresh_token'], 'existing-refresh');
+      return http.Response(
+          '{"access_token":"new-access","expires_in":1800}', 200);
+    });
+    final oauth = DesktopGoogleOAuth(
+        clientId: 'desktop.apps.googleusercontent.com',
+        clientSecret: 'rotated-client-secret',
+        credentials: store,
+        httpClient: client);
+
+    expect(await oauth.accessToken(now: DateTime.utc(2026)), 'new-access');
+    expect((await store.read())!.refreshToken, 'existing-refresh');
+  });
+
+  test('rejected refresh clears stale credentials and allows reauthorization',
+      () async {
+    final backend = OAuthMemoryBackend();
+    final store = SecureGoogleCredentialStore(backend);
+    await store.write(GoogleCredentials(
+        accessToken: 'expired-access',
+        refreshToken: 'revoked-refresh',
+        expiresAt: DateTime.utc(2020),
+        accountSubject: 'account'));
+    final client = MockClient((request) async {
+      if (request.url.host == 'oauth2.googleapis.com') {
+        if (request.bodyFields['grant_type'] == 'refresh_token') {
+          return http.Response(
+              '{"error":"invalid_grant","error_description":"Token revoked"}',
+              400);
+        }
+        expect(request.bodyFields['grant_type'], 'authorization_code');
+        expect(request.bodyFields['client_secret'], 'desktop-test-secret');
+        return http.Response(
+            jsonEncode({
+              'access_token': 'reauthorized-access',
+              'refresh_token': 'replacement-refresh',
+              'expires_in': 3600,
+              'scope': 'openid https://www.googleapis.com/auth/drive.appdata',
+            }),
+            200);
+      }
+      expect(request.url.host, 'openidconnect.googleapis.com');
+      return http.Response('{"sub":"stable-account-subject"}', 200);
+    });
+    DesktopGoogleOAuth createOAuth({Future<bool> Function(Uri)? openBrowser}) =>
+        DesktopGoogleOAuth(
+            clientId: 'desktop.apps.googleusercontent.com',
+            clientSecret: 'desktop-test-secret',
+            credentials: store,
+            httpClient: client,
+            openBrowser: openBrowser);
+
+    await expectLater(
+        createOAuth().accessToken(now: DateTime.utc(2026)),
+        throwsA(isA<GoogleOAuthException>().having(
+            (error) => error.oauthErrorCode,
+            'oauthErrorCode',
+            'invalid_grant')));
+    expect(await store.read(), isNull);
+
+    final replacement = await createOAuth(openBrowser: (uri) async {
+      await _completeLoopback(uri, code: 'replacement-code');
+      return true;
+    }).signIn();
+    expect(replacement.refreshToken, 'replacement-refresh');
+    expect((await store.read())!.accessToken, 'reauthorized-access');
   });
 }

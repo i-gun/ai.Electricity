@@ -80,22 +80,34 @@ jobs:
         shell: bash
         env:
           PLATFORM: ${{ matrix.platform }}
+          GOOGLE_OAUTH_DESKTOP_CLIENT_ID: ${{ matrix.platform != 'android' && vars['GOOGLE_OAUTH_DESKTOP_CLIENT_ID'] || '' }}
+          GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET: ${{ matrix.platform != 'android' && secrets['GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET'] || '' }}
         run: |
           set -euo pipefail
+          oauth_defines=()
+          if [[ "$PLATFORM" != "android" ]]; then
+            if [[ -n "${GOOGLE_OAUTH_DESKTOP_CLIENT_ID:-}" && -n "${GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET:-}" ]]; then
+              oauth_defines+=(--dart-define="GOOGLE_OAUTH_DESKTOP_CLIENT_ID=$GOOGLE_OAUTH_DESKTOP_CLIENT_ID")
+              oauth_defines+=(--dart-define="GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET=$GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET")
+            elif [[ -n "${GOOGLE_OAUTH_DESKTOP_CLIENT_ID:-}" || -n "${GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET:-}" ]]; then
+              echo 'Configure both GOOGLE_OAUTH_DESKTOP_CLIENT_ID and GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET, or neither.'
+              exit 1
+            fi
+          fi
           case "$PLATFORM" in
             windows)
               cd apps/desktop
-              flutter build windows --release
+              flutter build windows --release "${oauth_defines[@]}"
               cd ../..
               ;;
             macos)
               cd apps/desktop
-              flutter build macos --release
+              flutter build macos --release "${oauth_defines[@]}"
               cd ../..
               ;;
             linux)
               cd apps/desktop
-              flutter build linux --release
+              flutter build linux --release "${oauth_defines[@]}"
               cd ../..
               ;;
             android)

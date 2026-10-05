@@ -10,9 +10,13 @@ void main() {
   final keyCache = SecureVaultKeyCache(secureBackend);
   final clientId =
       const String.fromEnvironment('GOOGLE_OAUTH_DESKTOP_CLIENT_ID');
+  final clientSecret =
+      const String.fromEnvironment('GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET');
   DesktopGoogleOAuth? oauth;
-  DesktopGoogleOAuth createOAuth() => oauth ??=
-      DesktopGoogleOAuth(clientId: clientId, credentials: credentialStore);
+  DesktopGoogleOAuth createOAuth() => oauth ??= DesktopGoogleOAuth(
+      clientId: clientId,
+      clientSecret: clientSecret,
+      credentials: credentialStore);
   final driveStore = GoogleDriveEncryptedStore.withAccessToken(
       () => createOAuth().accessToken());
   final syncSession = GoogleDriveSyncSession(
