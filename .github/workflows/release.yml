@@ -63,6 +63,30 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+      - name: Provision Android release keystore
+        if: matrix.platform == 'android'
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_SIGNING_CERT_SHA256: ${{ vars.ANDROID_SIGNING_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "Required Android signing secret is missing: $name"
+              exit 1
+            fi
+          done
+          if [[ ! "$ANDROID_SIGNING_CERT_SHA256" =~ ^[a-fA-F0-9]{64}$ ]]; then
+            echo 'ANDROID_SIGNING_CERT_SHA256 must contain the 64-character release certificate digest.'
+            exit 1
+          fi
+          umask 077
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/android-release.jks"
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/android-release.jks" >> "$GITHUB_ENV"
       - name: Install Linux desktop dependencies
         if: matrix.platform == 'linux'
         run: |
@@ -82,6 +106,9 @@ jobs:
           PLATFORM: ${{ matrix.platform }}
           GOOGLE_OAUTH_DESKTOP_CLIENT_ID: ${{ matrix.platform != 'android' && vars['GOOGLE_OAUTH_DESKTOP_CLIENT_ID'] || '' }}
           GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET: ${{ matrix.platform != 'android' && secrets['GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET'] || '' }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ matrix.platform == 'android' && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
+          ANDROID_KEY_ALIAS: ${{ matrix.platform == 'android' && secrets.ANDROID_KEY_ALIAS || '' }}
+          ANDROID_KEY_PASSWORD: ${{ matrix.platform == 'android' && secrets.ANDROID_KEY_PASSWORD || '' }}
         run: |
           set -euo pipefail
           oauth_defines=()
@@ -120,6 +147,15 @@ jobs:
               exit 1
               ;;
           esac
+      - name: Verify Android APK signature and release certificate
+        if: matrix.platform == 'android'
+        shell: pwsh
+        env:
+          ANDROID_SIGNING_CERT_SHA256: ${{ vars.ANDROID_SIGNING_CERT_SHA256 }}
+        run: |
+          ./.github/scripts/verify_android_apk.ps1 `
+            -ApkPath apps/mobile/build/app/outputs/flutter-apk/app-release.apk `
+            -ExpectedCertificateSha256 $env:ANDROID_SIGNING_CERT_SHA256
       - name: Package Windows release binary
         if: matrix.platform == 'windows'
         shell: pwsh
@@ -176,6 +212,10 @@ jobs:
           path: release-assets
           if-no-files-found: error
           retention-days: 7
+      - name: Remove Android release keystore
+        if: always() && matrix.platform == 'android'
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/android-release.jks"
 
   publish-release:
     needs: [validate-release, build-release-assets]
