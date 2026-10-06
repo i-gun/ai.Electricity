@@ -23,13 +23,25 @@ if (-not $apksigner) {
     throw 'Android SDK build-tools must provide apksigner.'
 }
 
-$verification = & $apksigner.FullName verify --print-certs $ApkPath
+$verification = & $apksigner.FullName verify --verbose --print-certs $ApkPath
 if ($LASTEXITCODE -ne 0) {
     throw 'APK signature verification failed; publication is forbidden.'
 }
-$certificates = @($verification | Select-String '^Signer #\d+ certificate SHA-256 digest: ([a-fA-F0-9]{64})$')
-if ($certificates.Count -ne 1 -or
-    $certificates[0].Matches[0].Groups[1].Value -ne $ExpectedCertificateSha256) {
-    throw 'APK signing certificate does not match the pinned release certificate.'
+$signers = @($verification | Select-String '^Number of signers: 1$')
+if ($signers.Count -ne 1) {
+    $verification | Write-Output
+    throw 'Expected exactly one APK signer.'
+}
+$certificatePattern = '^(?:Signer (?:#\d+|\(minSdkVersion=\d+(?: \(dev release=true\))?, maxSdkVersion=\d+\))|V[123](?:\.\d+)? Signer(?: \(.*\))?:) certificate SHA-256 digest: ([a-fA-F0-9]{64})$'
+$certificates = @($verification | Select-String $certificatePattern)
+if ($certificates.Count -eq 0) {
+    $verification | Write-Output
+    throw 'No recognized APK signing certificate digest was reported.'
+}
+foreach ($certificate in $certificates) {
+    $actualCertificateSha256 = $certificate.Matches[0].Groups[1].Value
+    if ($actualCertificateSha256 -ne $ExpectedCertificateSha256) {
+        throw "APK signing certificate mismatch. Expected: $ExpectedCertificateSha256; actual: $actualCertificateSha256"
+    }
 }
 Write-Output 'APK signature and pinned signing certificate verified.'
