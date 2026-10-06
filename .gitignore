@@ -26,6 +26,9 @@ ios/Pods/
 apps/mobile/ios/Flutter/Local.xcconfig
 ios/.symlinks/
 macos/Pods/
+*.jks
+*.keystore
+**/key.properties
 linux/flutter/ephemeral/
 windows/flutter/ephemeral/
 

@@ -61,5 +61,9 @@ notarized macOS apps, and installers are unsupported until an approved ADR and c
 
 `release.yml` is tag-triggered by `v*.*.*`. It builds release desktop bundles and a release Android
 APK, packages each binary, generates `SHA256SUMS`, and publishes the files as assets on the matching
-GitHub Release. GitHub Releases are the binary distribution surface; GitHub Pages is not used for
-binary storage.
+GitHub Release. Unlike retained diagnostic builds, publication requires a persistent Android
+signing key in repository secrets and a pinned certificate SHA-256 in a repository variable.
+The APK signature and certificate are checked before artifact upload; failure blocks publication.
+Provisioning instructions are in `apps/mobile/README.md`. Never generate, log, or commit private
+signing keys or passwords through an agent. GitHub Releases are the binary distribution surface;
+GitHub Pages is not used for binary storage.

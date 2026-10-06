@@ -4,6 +4,22 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val releaseSigning = listOf(
+    "ANDROID_KEYSTORE_PATH",
+    "ANDROID_KEYSTORE_PASSWORD",
+    "ANDROID_KEY_ALIAS",
+    "ANDROID_KEY_PASSWORD",
+).associateWith { providers.environmentVariable(it).orNull }
+val hasReleaseSigning = releaseSigning.values.any { !it.isNullOrEmpty() }
+if (hasReleaseSigning) {
+    require(releaseSigning.values.all { !it.isNullOrEmpty() }) {
+        "All Android release signing environment variables must be configured."
+    }
+    require(file(releaseSigning.getValue("ANDROID_KEYSTORE_PATH")!!).isFile) {
+        "Android release keystore does not exist."
+    }
+}
+
 android {
     namespace = "dev.aielectricity.mobile"
     compileSdk = flutter.compileSdkVersion
@@ -29,6 +45,21 @@ android {
         versionName = flutter.versionName
     }
 
+    if (hasReleaseSigning) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(releaseSigning.getValue("ANDROID_KEYSTORE_PATH")!!)
+                storePassword = releaseSigning.getValue("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = releaseSigning.getValue("ANDROID_KEY_ALIAS")
+                keyPassword = releaseSigning.getValue("ANDROID_KEY_PASSWORD")
+            }
+        }
+        buildTypes {
+            release {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
+    }
 }
 
 kotlin {
