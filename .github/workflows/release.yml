@@ -109,9 +109,17 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ matrix.platform == 'android' && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
           ANDROID_KEY_ALIAS: ${{ matrix.platform == 'android' && secrets.ANDROID_KEY_ALIAS || '' }}
           ANDROID_KEY_PASSWORD: ${{ matrix.platform == 'android' && secrets.ANDROID_KEY_PASSWORD || '' }}
+          GOOGLE_OAUTH_WEB_CLIENT_ID: ${{ matrix.platform == 'android' && vars['GOOGLE_OAUTH_WEB_CLIENT_ID'] || '' }}
         run: |
           set -euo pipefail
           oauth_defines=()
+          if [[ "$PLATFORM" == "android" ]]; then
+            if [[ ! "${GOOGLE_OAUTH_WEB_CLIENT_ID:-}" =~ ^[A-Za-z0-9-]+\.apps\.googleusercontent\.com$ ]]; then
+              echo 'GOOGLE_OAUTH_WEB_CLIENT_ID repository variable must contain the public Web OAuth client ID.'
+              exit 1
+            fi
+            oauth_defines+=(--dart-define="GOOGLE_OAUTH_WEB_CLIENT_ID=$GOOGLE_OAUTH_WEB_CLIENT_ID")
+          fi
           if [[ "$PLATFORM" != "android" ]]; then
             if [[ -n "${GOOGLE_OAUTH_DESKTOP_CLIENT_ID:-}" && -n "${GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET:-}" ]]; then
               oauth_defines+=(--dart-define="GOOGLE_OAUTH_DESKTOP_CLIENT_ID=$GOOGLE_OAUTH_DESKTOP_CLIENT_ID")
@@ -139,7 +147,7 @@ jobs:
               ;;
             android)
               cd apps/mobile
-              flutter build apk --release
+              flutter build apk --release "${oauth_defines[@]}"
               cd ../..
               ;;
             *)

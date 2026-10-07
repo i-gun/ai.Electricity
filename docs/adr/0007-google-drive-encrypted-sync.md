@@ -156,9 +156,9 @@ the release environment rather than committed as user/project-specific values:
   `--dart-define`, and the matching `GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET` via
   Dart `--dart-define`. The client secret is public/extractable in the
   distributed app; source repositories and logs must not contain its value.
-- Android: `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_WEB_CLIENT_ID` via Dart
-  `--dart-define`, plus the Android package name and signing certificate SHA
-  registered in Google Cloud.
+- Android: `GOOGLE_OAUTH_WEB_CLIENT_ID` (a Web application client) via Dart
+  `--dart-define`, plus an Android client registering the package name and
+  release signing certificate SHA-1 in the same Google Cloud project.
 - iOS: the same Dart defines, plus the iOS OAuth client ID and its reversed
   client ID registered as a URL scheme in the Runner target. Google Sign-In
   also has App Store account-login requirements to review before release.
