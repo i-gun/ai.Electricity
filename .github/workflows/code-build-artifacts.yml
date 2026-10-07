@@ -223,10 +223,18 @@ jobs:
           MODE: ${{ needs.prepare.outputs.build_mode }}
           GOOGLE_OAUTH_DESKTOP_CLIENT_ID: ${{ contains(fromJSON('["windows","macos","linux"]'), matrix.platform) && vars['GOOGLE_OAUTH_DESKTOP_CLIENT_ID'] || '' }}
           GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET: ${{ contains(fromJSON('["windows","macos","linux"]'), matrix.platform) && secrets['GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET'] || '' }}
+          GOOGLE_OAUTH_WEB_CLIENT_ID: ${{ matrix.platform == 'android' && vars['GOOGLE_OAUTH_WEB_CLIENT_ID'] || '' }}
         run: |
           set -euo pipefail
           mode_flag="--$MODE"
           oauth_defines=()
+          if [[ "$PLATFORM" == "android" ]]; then
+            if [[ -n "${GOOGLE_OAUTH_WEB_CLIENT_ID:-}" ]]; then
+              oauth_defines+=(--dart-define="GOOGLE_OAUTH_WEB_CLIENT_ID=$GOOGLE_OAUTH_WEB_CLIENT_ID")
+            else
+              echo '::warning::GOOGLE_OAUTH_WEB_CLIENT_ID is not set; Android Google sign-in will be disabled in this artifact.'
+            fi
+          fi
           if [[ "$PLATFORM" == "windows" || "$PLATFORM" == "macos" || "$PLATFORM" == "linux" ]]; then
             if [[ -n "${GOOGLE_OAUTH_DESKTOP_CLIENT_ID:-}" && -n "${GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET:-}" ]]; then
               oauth_defines+=(--dart-define="GOOGLE_OAUTH_DESKTOP_CLIENT_ID=$GOOGLE_OAUTH_DESKTOP_CLIENT_ID")
@@ -254,7 +262,7 @@ jobs:
               ;;
             android)
               cd apps/mobile
-              flutter build apk --release
+              flutter build apk --release "${oauth_defines[@]}"
               cd ../..
               ;;
             ios)

@@ -40,10 +40,18 @@ void main() {
               SyncVaultChoice(fileId: vault.fileId, vaultId: vault.vaultId),
           ],
       onGoogleConnect: () async {
-        await nativeOAuth.signIn();
+        try {
+          await nativeOAuth.signIn();
+        } on GoogleOAuthException catch (error) {
+          throw SyncUiException(error.reason);
+        }
       },
       onGoogleReauthorize: () async {
-        await nativeOAuth.reauthorize();
+        try {
+          await nativeOAuth.reauthorize();
+        } on GoogleOAuthException catch (error) {
+          throw SyncUiException(error.reason);
+        }
       },
       onGoogleDisconnect: () async {
         try {

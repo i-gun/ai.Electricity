@@ -1,5 +1,6 @@
 import 'package:ai_electricity_data/data.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 class NativeOAuthMemoryBackend implements SecureCredentialBackend {
   String? value;
@@ -132,5 +133,31 @@ void main() {
     await oauth.disconnect();
     expect(backend.disconnectCalls, 1);
     expect(await store.read(), isNull);
+  });
+
+  test('missing web client ID fails with a configuration reason', () async {
+    final backend = GoogleSignInNativeBackend(clientId: '', serverClientId: '');
+    await expectLater(
+        backend.initialize(),
+        throwsA(isA<GoogleOAuthException>().having((e) => e.reason, 'reason',
+            contains('GOOGLE_OAUTH_WEB_CLIENT_ID'))));
+  });
+
+  test('SDK failures map to actionable user-facing reasons', () {
+    String describe(GoogleSignInExceptionCode code, [String? description]) =>
+        describeGoogleSignInException(
+            GoogleSignInException(code: code, description: description));
+
+    expect(describe(GoogleSignInExceptionCode.canceled), contains('canceled'));
+    expect(describe(GoogleSignInExceptionCode.clientConfigurationError),
+        contains('SHA-1'));
+    expect(describe(GoogleSignInExceptionCode.providerConfigurationError, 'x'),
+        allOf(contains('not configured'), contains('(x)')));
+    expect(describe(GoogleSignInExceptionCode.uiUnavailable),
+        contains('unavailable'));
+    expect(describe(GoogleSignInExceptionCode.interrupted),
+        contains('interrupted'));
+    expect(describe(GoogleSignInExceptionCode.unknownError, 'boom'),
+        'Google sign-in failed: unknownError (boom).');
   });
 }

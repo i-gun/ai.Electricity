@@ -10,8 +10,15 @@ Build a Release APK from this directory:
 
 ```powershell
 flutter build apk --release `
-  --dart-define=GOOGLE_OAUTH_CLIENT_ID=your-public-android-client-id `
   --dart-define=GOOGLE_OAUTH_WEB_CLIENT_ID=your-public-web-client-id
+```
+
+Android ignores `GOOGLE_OAUTH_CLIENT_ID`; the app is identified by its package
+name and signing certificate SHA-1. CI release builds read the Web client ID
+from the `GOOGLE_OAUTH_WEB_CLIENT_ID` repository variable and fail without it:
+
+```powershell
+gh variable set GOOGLE_OAUTH_WEB_CLIENT_ID --body '<id>.apps.googleusercontent.com'
 ```
 
 The APK is written to `build/app/outputs/flutter-apk/app-release.apk`. Gradle
@@ -90,9 +97,11 @@ same application ID and signing key and use increasing Android `versionCode`
 values (the `+build-number` in this app's `pubspec.yaml`); GitHub tags alone do
 not change the Android package version.
 
-Google Sign-In also requires `dev.aielectricity.mobile` and the release
-certificate SHA fingerprint registered in Google Cloud. APK signing does not
-by itself configure OAuth or guarantee compatibility with every Android device.
+Google Sign-In also requires an Android OAuth client in the same Google Cloud
+project as the Web client, registered with package `dev.aielectricity.mobile`
+and the release certificate **SHA-1** fingerprint (`keytool -list -v` output).
+APK signing does not by itself configure OAuth or guarantee compatibility with
+every Android device.
 
 ## iOS
 

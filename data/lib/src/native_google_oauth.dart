@@ -52,12 +52,15 @@ class GoogleSignInNativeBackend implements NativeGoogleAuthBackend {
   Future<void> initialize() => _initialization ??= _initialize();
 
   Future<void> _initialize() async {
-    if (clientId.isEmpty || serverClientId.isEmpty) {
+    if (serverClientId.isEmpty) {
       throw const GoogleOAuthException(
-          'Set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_WEB_CLIENT_ID');
+          'Google sign-in is not configured for this build: '
+          'GOOGLE_OAUTH_WEB_CLIENT_ID is missing.');
     }
-    await _googleSignIn.initialize(
-        clientId: clientId, serverClientId: serverClientId);
+    // Android ignores clientId; iOS falls back to GIDClientID in Info.plist.
+    await _guard(() => _googleSignIn.initialize(
+        clientId: clientId.isEmpty ? null : clientId,
+        serverClientId: serverClientId));
     _googleSignIn.authenticationEvents.listen((event) {
       switch (event) {
         case GoogleSignInAuthenticationEventSignIn(:final user):
@@ -69,14 +72,20 @@ class GoogleSignInNativeBackend implements NativeGoogleAuthBackend {
       _currentAccount = null;
     });
     final attempt = _googleSignIn.attemptLightweightAuthentication();
-    if (attempt != null) _currentAccount = await attempt;
+    if (attempt != null) {
+      try {
+        _currentAccount = await attempt;
+      } on GoogleSignInException {
+        _currentAccount = null;
+      }
+    }
   }
 
   @override
   Future<NativeGoogleAccount> authenticate() async {
     await initialize();
-    final account =
-        await _googleSignIn.authenticate(scopeHint: const [_driveAppDataScope]);
+    final account = await _guard(() =>
+        _googleSignIn.authenticate(scopeHint: const [_driveAppDataScope]));
     _currentAccount = account;
     return NativeGoogleAccount(account.id);
   }
@@ -118,7 +127,7 @@ class GoogleSignInNativeBackend implements NativeGoogleAuthBackend {
     await initialize();
     final account = _accountFor(subject);
     final authorization =
-        await account.authorizationClient.authorizeScopes(scopes);
+        await _guard(() => account.authorizationClient.authorizeScopes(scopes));
     return authorization.accessToken;
   }
 
@@ -128,6 +137,32 @@ class GoogleSignInNativeBackend implements NativeGoogleAuthBackend {
     await _googleSignIn.disconnect();
     _currentAccount = null;
   }
+}
+
+Future<T> _guard<T>(Future<T> Function() action) async {
+  try {
+    return await action();
+  } on GoogleSignInException catch (error) {
+    throw GoogleOAuthException(describeGoogleSignInException(error));
+  }
+}
+
+/// User-facing reason for a Google Sign-In SDK failure; never includes tokens.
+String describeGoogleSignInException(GoogleSignInException error) {
+  final detail = error.description == null ? '' : ' (${error.description})';
+  return switch (error.code) {
+    GoogleSignInExceptionCode.canceled => 'Google sign-in was canceled.',
+    GoogleSignInExceptionCode.clientConfigurationError ||
+    GoogleSignInExceptionCode.providerConfigurationError =>
+      'Google sign-in is not configured for this app build. Verify the web '
+          'client ID and the Android package name and signing certificate '
+          'SHA-1 registered in Google Cloud$detail.',
+    GoogleSignInExceptionCode.uiUnavailable =>
+      'Google sign-in UI is unavailable on this device.',
+    GoogleSignInExceptionCode.interrupted =>
+      'Google sign-in was interrupted. Try again.',
+    _ => 'Google sign-in failed: ${error.code.name}$detail.',
+  };
 }
 
 /// Coordinates SDK-managed access-token renewal and secure local caching.
