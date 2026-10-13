@@ -1528,6 +1528,42 @@ class _StatsViewState extends State<StatsView> {
     final dayNightTotal = dayKwh + nightKwh;
     final dayShare = dayNightTotal == 0 ? 0 : dayKwh / dayNightTotal;
     final chartZones = _chartZones(scopedZones, consumptionByZone.keys);
+    final cumulativeZones = _chartZones(
+        scopedZones,
+        scopedReadings
+            .where((reading) => !reading.readingDate.isAfter(range.end))
+            .map((reading) => reading.zoneId));
+    final cumulativeChart = _ChartPanel(
+        title: 'Cumulative meter value',
+        child: SizedBox(
+            height: 240,
+            child: Semantics(
+                label: 'Cumulative meter value line chart',
+                child: LineChart(LineChartData(
+                    titlesData: FlTitlesData(
+                        topTitles: const AxisTitles(
+                            sideTitles: SideTitles(showTitles: false)),
+                        rightTitles: const AxisTitles(
+                            sideTitles: SideTitles(showTitles: false)),
+                        leftTitles: const AxisTitles(
+                            sideTitles:
+                                SideTitles(showTitles: true, reservedSize: 48)),
+                        bottomTitles: AxisTitles(
+                            sideTitles: SideTitles(
+                                showTitles: true,
+                                reservedSize: 32,
+                                getTitlesWidget: (value, meta) => Padding(
+                                    padding: const EdgeInsets.only(top: 8),
+                                    child: Text(
+                                        _formatDate(
+                                            context, _dateFromDayValue(value)),
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .labelSmall))))),
+                    lineBarsData: [
+                      for (final zone in cumulativeZones)
+                        _cumulativeLine(scopedReadings, zone, range),
+                    ])))));
     final warning = _reconcile(scopedZones, consumptionByZone);
     final excludedLocations = showCombined
         ? activeLocations
@@ -1621,12 +1657,15 @@ class _StatsViewState extends State<StatsView> {
                       '${warning.total.value.toStringAsFixed(3)} kWh (difference ${warning.difference.value.toStringAsFixed(3)} kWh).'))),
         ],
         const SizedBox(height: 24),
-        if (consumption.isEmpty)
-          const _EmptyState(
+        if (consumption.isEmpty) ...[
+          _EmptyState(
               icon: Icons.bar_chart,
               title: 'Charts will appear here',
-              message: 'Add at least two readings to calculate consumption.')
-        else if (showCombined) ...[
+              message: cumulativeZones.isEmpty
+                  ? 'Add at least two readings to calculate consumption.'
+                  : 'No consumption recorded in this period.'),
+          if (!showCombined && cumulativeZones.isNotEmpty) cumulativeChart,
+        ] else if (showCombined) ...[
           LayoutBuilder(builder: (context, constraints) {
             final consumptionDonut = _LocationDonut(
                 title: 'Consumption by location',
@@ -1792,38 +1831,7 @@ class _StatsViewState extends State<StatsView> {
                                     width: 18)
                               ]),
                           ]))))),
-          _ChartPanel(
-              title: 'Cumulative meter value',
-              child: SizedBox(
-                  height: 240,
-                  child: Semantics(
-                      label: 'Cumulative meter value line chart',
-                      child: LineChart(LineChartData(
-                          titlesData: FlTitlesData(
-                              topTitles: const AxisTitles(
-                                  sideTitles: SideTitles(showTitles: false)),
-                              rightTitles: const AxisTitles(
-                                  sideTitles: SideTitles(showTitles: false)),
-                              leftTitles: const AxisTitles(
-                                  sideTitles: SideTitles(
-                                      showTitles: true, reservedSize: 48)),
-                              bottomTitles: AxisTitles(
-                                  sideTitles: SideTitles(
-                                      showTitles: true,
-                                      reservedSize: 32,
-                                      getTitlesWidget: (value, meta) => Padding(
-                                          padding:
-                                              const EdgeInsets.only(top: 8),
-                                          child: Text(
-                                              _formatDate(context,
-                                                  _dateFromDayValue(value)),
-                                              style: Theme.of(context)
-                                                  .textTheme
-                                                  .labelSmall))))),
-                          lineBarsData: [
-                            for (final zone in chartZones)
-                              _cumulativeLine(scopedReadings, zone),
-                          ]))))),
+          cumulativeChart,
           for (final zone
               in zones.where((z) => deltasByZone.containsKey(z.code.value)))
             Padding(
@@ -2011,15 +2019,37 @@ ReconciliationWarning? _reconcile(
   return ZoneReconciliation().compare(total, components);
 }
 
-LineChartBarData _cumulativeLine(List<MeterReading> readings, TariffZone zone) {
+/// Step line over [range]: the last reading before the range carries in from
+/// its start, and the latest value is held flat until the range end (or today).
+LineChartBarData _cumulativeLine(
+    List<MeterReading> readings, TariffZone zone, DateRange range) {
   final zoneReadings = readings
-      .where((reading) => reading.zoneId == zone.code.value)
+      .where((reading) =>
+          reading.zoneId == zone.code.value &&
+          !reading.readingDate.isAfter(range.end))
       .toList()
     ..sort((a, b) => a.readingDate.compareTo(b.readingDate));
-  return LineChartBarData(spots: [
-    for (final reading in zoneReadings)
-      FlSpot(_dayValue(reading.readingDate), reading.valueKwh.value)
-  ], color: Color(zone.colorArgb));
+  final spots = <FlSpot>[];
+  final prior =
+      zoneReadings.where((r) => r.readingDate.isBefore(range.start)).toList();
+  if (prior.isNotEmpty) {
+    spots.add(FlSpot(_dayValue(range.start), prior.last.valueKwh.value));
+  }
+  for (final reading
+      in zoneReadings.where((r) => range.contains(r.readingDate))) {
+    spots.add(FlSpot(_dayValue(reading.readingDate), reading.valueKwh.value));
+  }
+  if (spots.isNotEmpty) {
+    final now = DateTime.now();
+    final endX = _dayValue(range.end.isAfter(now) ? now : range.end);
+    if (endX > spots.last.x) spots.add(FlSpot(endX, spots.last.y));
+  }
+  return LineChartBarData(
+      spots: spots,
+      isStepLineChart: true,
+      lineChartStepData: const LineChartStepData(
+          stepDirection: LineChartStepData.stepDirectionForward),
+      color: Color(zone.colorArgb));
 }
 
 /// Days since epoch, used as the shared x-axis coordinate for date-based charts.
