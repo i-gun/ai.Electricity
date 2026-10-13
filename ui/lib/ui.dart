@@ -448,8 +448,8 @@ class _SharedHomeState extends State<SharedHome> {
   final rates = <TariffRate>[
     TariffRate(1, 'total', Money(25), DateTime(2000, 1, 1)),
   ];
-  DateRange range = DateRange.lastMonths(3);
-  String rangeKey = '3M';
+  DateRange range = _lastWeek();
+  String rangeKey = '1W';
   String currencyCode = 'EUR';
   int currentLocationId = 1;
 
@@ -1580,6 +1580,7 @@ class _StatsViewState extends State<StatsView> {
           DropdownButton<String>(
             value: rangeKey,
             items: const [
+              DropdownMenuItem(value: '1W', child: Text('1 week')),
               DropdownMenuItem(value: '1M', child: Text('1 month')),
               DropdownMenuItem(value: '3M', child: Text('3 months')),
               DropdownMenuItem(value: '6M', child: Text('6 months')),
@@ -1599,6 +1600,8 @@ class _StatsViewState extends State<StatsView> {
                     onRangeChanged(
                         DateRange(picked.start, picked.end), 'custom');
                   }
+                } else if (value == '1W') {
+                  onRangeChanged(_lastWeek(), value);
                 } else {
                   final amount =
                       int.parse(value.substring(0, value.length - 1));
@@ -1864,6 +1867,12 @@ class _StatsViewState extends State<StatsView> {
       ]),
     );
   }
+}
+
+/// Today plus the six preceding days.
+DateRange _lastWeek() {
+  final now = DateTime.now();
+  return DateRange(DateTime(now.year, now.month, now.day - 6), now);
 }
 
 /// Day/night replace the total slice once they carry data, so nothing is double-counted.

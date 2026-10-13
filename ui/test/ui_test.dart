@@ -352,6 +352,34 @@ void main() {
     expect(find.text('Total'), findsNothing);
   });
 
+  testWidgets('stats range selector supports a one-week range', (tester) async {
+    DateRange? selectedRange;
+    String? selectedKey;
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: StatsView(
+                readings: [],
+                rates: [],
+                zones: [],
+                range: DateRange.lastMonths(3),
+                rangeKey: '3M',
+                currencyCode: 'EUR',
+                onRangeChanged: (range, key) {
+                  selectedRange = range;
+                  selectedKey = key;
+                }))));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(DropdownButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('1 week').last);
+    await tester.pumpAndSettle();
+
+    expect(selectedKey, '1W');
+    expect(selectedRange, isNotNull);
+    expect(selectedRange!.days, 7);
+  });
+
   testWidgets('single-location install has no visible location scope switch',
       (tester) async {
     await tester.pumpWidget(const MaterialApp(home: SharedHome()));
