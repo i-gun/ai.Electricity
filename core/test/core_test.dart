@@ -2,6 +2,23 @@ import 'package:test/test.dart';
 import 'package:ai_electricity_core/core.dart';
 
 void main() {
+  test('location region is explicit and survives unrelated edits', () {
+    const location = Location(1, 'Home');
+    expect(location.region, ShutdownRegion.kyivRegion);
+    expect(location.copyWith(name: 'Other').region, ShutdownRegion.kyivRegion);
+    final city = location.copyWith(
+        region: ShutdownRegion.kyivCity,
+        city: 'Kyiv',
+        street: 'Main',
+        building: '66');
+    expect(city.copyWith().region, ShutdownRegion.kyivCity);
+    expect(city.hasShutdownAddress, isTrue);
+    expect(ShutdownRegion.kyivRegion.code, 'krem');
+    expect(ShutdownRegion.kyivRegion.label, 'Kyiv region');
+    expect(ShutdownRegion.kyivCity.code, 'kem');
+    expect(ShutdownRegion.kyivCity.label, 'Kyiv city');
+  });
+
   group('value objects', () {
     test('reject invalid kWh and preserves fixed precision', () {
       expect(() => Kwh(-1), throwsArgumentError);

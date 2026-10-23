@@ -7,11 +7,47 @@ import 'package:ai_electricity_core/core.dart' as domain;
 import 'package:ai_electricity_data/data.dart';
 
 void main() {
+  test('schema v13 addresses retain their data and default to Kyiv region',
+      () async {
+    final database = ElectricityDatabase(NativeDatabase.memory(setup: (db) {
+      db.execute(
+          'CREATE TABLE locations (id INTEGER PRIMARY KEY, sync_id TEXT, '
+          'name TEXT NOT NULL, color_argb INTEGER NOT NULL, sort_order INTEGER NOT NULL, '
+          "is_archived INTEGER NOT NULL DEFAULT 0, city TEXT NOT NULL DEFAULT '', "
+          "street TEXT NOT NULL DEFAULT '', building TEXT NOT NULL DEFAULT '')");
+      db.execute(
+          "INSERT INTO locations VALUES (42, 'stable', 'Home', 123, 0, 0, 'Village', 'Main', '66')");
+      db.execute('PRAGMA user_version = 13');
+    }));
+    addTearDown(database.close);
+    final location =
+        (await DriftLocationRepository(database).watchAll().first).single;
+    expect(location.region, domain.ShutdownRegion.kyivRegion);
+    expect(location.id, 42);
+    expect([location.city, location.street, location.building],
+        ['Village', 'Main', '66']);
+  });
+
+  test('location region round-trips through storage and journal', () async {
+    final database = ElectricityDatabase(NativeDatabase.memory());
+    addTearDown(database.close);
+    final repository = DriftLocationRepository(database);
+    await repository.save(const domain.Location(0, 'Kyiv',
+        region: domain.ShutdownRegion.kyivCity,
+        city: 'Kyiv',
+        street: 'Main',
+        building: '66'));
+    final saved = (await repository.watchAll().first)
+        .singleWhere((row) => row.name == 'Kyiv');
+    expect(saved.region, domain.ShutdownRegion.kyivCity);
+    final changes = await DriftSyncJournal(database).pending();
+    expect((jsonDecode(changes.last.payload) as Map)['region'], 'kem');
+  });
+
   test('opens an in-memory database', () async {
     final database = ElectricityDatabase(NativeDatabase.memory());
     addTearDown(database.close);
-
-    expect(database.schemaVersion, 13);
+    expect(database.schemaVersion, 14);
     expect(await database.select(database.tariffZones).get(), hasLength(3));
     final seededLocations = await database.select(database.locations).get();
     expect(seededLocations, hasLength(1));

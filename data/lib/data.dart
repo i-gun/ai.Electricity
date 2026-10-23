@@ -53,6 +53,7 @@ class Locations extends Table {
   IntColumn get sortOrder => integer()();
   BoolColumn get isArchived => boolean().withDefault(const Constant(false))();
   TextColumn get city => text().withDefault(const Constant(''))();
+  TextColumn get region => text().withDefault(const Constant('krem'))();
   TextColumn get street => text().withDefault(const Constant(''))();
   TextColumn get building => text().withDefault(const Constant(''))();
 }
@@ -63,6 +64,7 @@ Map<String, Object?> _locationSnapshot(Location row) => {
       'sortOrder': row.sortOrder,
       'isArchived': row.isArchived,
       'city': row.city,
+      'region': row.region,
       'street': row.street,
       'building': row.building,
     };
@@ -239,7 +241,7 @@ class ElectricityDatabase extends _$ElectricityDatabase {
   // compares version numbers, onUpgrade below detects the actual on-disk
   // shape via sqlite_master/PRAGMA instead of trusting `from` alone.
   @override
-  int get schemaVersion => 13;
+  int get schemaVersion => 14;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -286,6 +288,14 @@ class ElectricityDatabase extends _$ElectricityDatabase {
           });
         },
         onUpgrade: (m, from, to) async {
+          if (from < 14) {
+            final columns = await customSelect("PRAGMA table_info('locations')")
+                .map((row) => row.read<String>('name'))
+                .get();
+            if (columns.isNotEmpty && !columns.contains('region')) {
+              await m.addColumn(locations, locations.region);
+            }
+          }
           if (from < 13) {
             final columns = await customSelect("PRAGMA table_info('locations')")
                 .map((row) => row.read<String>('name'))
@@ -1716,6 +1726,9 @@ class GoogleDriveIncomingApplier {
               ..where((row) => row.id.equals(existing.id)))
             .write(LocationsCompanion(
                 name: Value(_string(payload, 'name')),
+                region: payload.containsKey('region')
+                    ? Value(_regionString(payload))
+                    : const Value.absent(),
                 city: payload.containsKey('city')
                     ? Value(_addressString(payload, 'city'))
                     : const Value.absent(),
@@ -1763,6 +1776,9 @@ class GoogleDriveIncomingApplier {
     await database.into(database.locations).insert(LocationsCompanion.insert(
         syncId: Value(syncId),
         name: name,
+        region: payload.containsKey('region')
+            ? Value(_regionString(payload))
+            : const Value.absent(),
         city: payload.containsKey('city')
             ? Value(_addressString(payload, 'city'))
             : const Value.absent(),
@@ -2283,6 +2299,7 @@ class GoogleDriveIncomingApplier {
 
   bool _locationMatches(Location row, Map<String, dynamic> payload) =>
       row.name == payload['name'] &&
+      (!payload.containsKey('region') || row.region == payload['region']) &&
       (!payload.containsKey('city') || row.city == payload['city']) &&
       (!payload.containsKey('street') || row.street == payload['street']) &&
       (!payload.containsKey('building') ||
@@ -2338,6 +2355,14 @@ class GoogleDriveIncomingApplier {
     final value = payload[key];
     if (value is! String) throw FormatException('Invalid $key in sync payload');
     return value.trim();
+  }
+
+  String _regionString(Map<String, dynamic> payload) {
+    final value = _string(payload, 'region');
+    if (!domain.ShutdownRegion.values.any((region) => region.code == value)) {
+      throw const FormatException('Unsupported shutdown region');
+    }
+    return value;
   }
 
   String? _nullableString(Map<String, dynamic> payload, String key) {
@@ -2712,6 +2737,7 @@ class DriftLocationRepository implements domain.LocationRepository {
                 id: _idValue(location.id),
                 syncId: syncId,
                 name: location.name,
+                region: Value(location.region.code),
                 city: Value(location.city.trim()),
                 street: Value(location.street.trim()),
                 building: Value(location.building.trim()),
@@ -2751,6 +2777,8 @@ class DriftLocationRepository implements domain.LocationRepository {
             isDeleted: true);
       });
   domain.Location _toDomain(Location row) => domain.Location(row.id, row.name,
+      region: domain.ShutdownRegion.values
+          .singleWhere((region) => region.code == row.region),
       city: row.city,
       street: row.street,
       building: row.building,

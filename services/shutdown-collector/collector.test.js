@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { CachedCollector, intervalsFor, scheduleResult, selectAddress, validateAddress } from './collector.js';
+import { CachedCollector, DtekCollector, intervalsFor, resolveAddress, scheduleResult, selectAddress, siteFor, validateAddress } from './collector.js';
 
 const hours = () => Object.fromEntries(Array.from({ length: 24 }, (_, index) => [index + 1, 'yes']));
 
@@ -19,7 +19,52 @@ test('incomplete addresses fail before browser launch', () => {
     assert.throws(() => validateAddress(value));
   }
   assert.deepEqual(validateAddress({ city: ' City ', street: 'Main', building: '66' }),
-    { city: 'City', street: 'Main', building: '66' });
+    { region: 'krem', city: 'City', street: 'Main', building: '66' });
+});
+
+test('regions use fixed providers and Kyiv city supports a flat street list', () => {
+  assert.equal(siteFor('krem'), 'https://www.dtek-krem.com.ua');
+  assert.equal(siteFor('kem'), 'https://www.dtek-kem.com.ua');
+  for (const region of ['other', '__proto__', 'https://example.com']) {
+    assert.throws(() => validateAddress({ region, city: 'City', street: 'Main', building: '66' }));
+  }
+  assert.deepEqual(resolveAddress(['street Main'], { region: 'kem', city: '\u041c. \u041a\u0438\u0457\u0432', street: 'Main' }),
+    { city: '\u043c. \u041a\u0438\u0457\u0432', street: 'street Main' });
+  assert.throws(() => resolveAddress(['Main'], { region: 'kem', city: 'Village', street: 'Main' }));
+  assert.deepEqual(resolveAddress({ Village: ['Main'] }, { region: 'krem', city: 'Village', street: 'Main' }),
+    { city: 'Village', street: 'Main' });
+});
+
+test('cache separates identical address strings by region', async () => {
+  let calls = 0;
+  const collector = new CachedCollector(async address => { calls++; return address.region; });
+  const address = { city: 'Kyiv', street: 'Main', building: '66' };
+  assert.equal(await collector.fetch({ ...address, region: 'kem' }), 'kem');
+  assert.equal(await collector.fetch({ ...address, region: 'krem' }), 'krem');
+  assert.equal(calls, 2);
+});
+
+test('browser collector navigates to the selected provider', async () => {
+  for (const region of ['kem', 'krem']) {
+    let evaluations = 0;
+    let destination;
+    let closed = false;
+    const page = {
+      async goto(url) { destination = url; },
+      async waitForFunction() {},
+      async evaluate() {
+        if (evaluations++ === 0) return region === 'kem' ? ['Main'] : { Kyiv: ['Main'] };
+        return { city: 'Kyiv', street: 'Main', data: { 66: { sub_type_reason: ['GPV1.1'] } },
+          fact: { update: '23.10.2026 12:00', data: { 1792702800: { 'GPV1.1': hours() } } } };
+      },
+      async close() { closed = true; },
+    };
+    const result = await new DtekCollector({ async newPage() { return page; } })
+      .collect({ region, city: 'Kyiv', street: 'Main', building: '66' });
+    assert.equal(destination, `${siteFor(region)}/ua/shutdowns`);
+    assert.equal(result.region, region);
+    assert.equal(closed, true);
+  }
 });
 
 test('maps full and half-hours and rejects absent or unknown slots', () => {

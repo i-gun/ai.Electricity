@@ -30,7 +30,7 @@ const server = createServer(async (request, response) => {
     send(403, { error: 'Only local native clients are allowed' }); return;
   }
   if (request.method === 'GET' && request.url === '/health') {
-    send(200, { status: 'ready', provider: 'dtek-krem', browser: context ? 'started' : 'not started' }); return;
+    send(200, { status: 'ready', providers: ['dtek-krem', 'dtek-kem'], browser: context ? 'started' : 'not started' }); return;
   }
   if (request.method !== 'POST' || request.url !== '/shutdowns') {
     send(404, { error: 'Not found' }); return;
@@ -48,7 +48,7 @@ const server = createServer(async (request, response) => {
       chunks.push(chunk);
     }
     address = validateAddress(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-  } catch { send(400, { error: 'A complete city, street and building are required' }); return; }
+  } catch { send(400, { error: 'A supported region and complete city, street and building are required' }); return; }
   try {
     send(200, await collector.fetch(address));
   } catch {

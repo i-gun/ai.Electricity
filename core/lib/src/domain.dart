@@ -90,12 +90,23 @@ class DateRange {
 
 enum ZoneKind { total, day, night, custom }
 
+/// Supported distribution networks, independent of the address locality.
+enum ShutdownRegion {
+  kyivRegion('krem', 'Kyiv region'),
+  kyivCity('kem', 'Kyiv city');
+
+  const ShutdownRegion(this.code, this.label);
+  final String code;
+  final String label;
+}
+
 /// A physical property/meter that owns one or more [TariffZone]s (ADR 0006).
 class Location {
   const Location(this.id, this.name,
       {this.colorArgb = 0xff008577,
       this.sortOrder = 0,
       this.isArchived = false,
+      this.region = ShutdownRegion.kyivRegion,
       this.city = '',
       this.street = '',
       this.building = ''});
@@ -106,6 +117,7 @@ class Location {
   final bool isArchived;
 
   /// Optional address owned by this location, independent of other locations.
+  final ShutdownRegion region;
   final String city;
   final String street;
   final String building;
@@ -121,6 +133,7 @@ class Location {
           int? colorArgb,
           int? sortOrder,
           bool? isArchived,
+          ShutdownRegion? region,
           String? city,
           String? street,
           String? building}) =>
@@ -128,6 +141,7 @@ class Location {
           colorArgb: colorArgb ?? this.colorArgb,
           sortOrder: sortOrder ?? this.sortOrder,
           isArchived: isArchived ?? this.isArchived,
+          region: region ?? this.region,
           city: city ?? this.city,
           street: street ?? this.street,
           building: building ?? this.building);

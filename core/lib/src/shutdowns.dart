@@ -18,6 +18,7 @@ class ShutdownDay {
 class ShutdownSchedule {
   const ShutdownSchedule(
       {required this.city,
+      this.region = ShutdownRegion.kyivRegion,
       required this.street,
       required this.building,
       required this.groups,
@@ -26,6 +27,7 @@ class ShutdownSchedule {
       required this.days,
       this.currentOutage});
   final String city;
+  final ShutdownRegion region;
   final String street;
   final String building;
   final List<String> groups;

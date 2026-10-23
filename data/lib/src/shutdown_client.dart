@@ -34,6 +34,7 @@ class HttpShutdownScheduleRepository implements ShutdownScheduleRepository {
                 'Accept': 'application/json'
               },
               body: jsonEncode({
+                'region': location.region.code,
                 'city': location.city.trim(),
                 'street': location.street.trim(),
                 'building': location.building.trim()
@@ -45,6 +46,9 @@ class HttpShutdownScheduleRepository implements ShutdownScheduleRepository {
       }
       final json =
           jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+      if ((json['region'] ?? 'krem') != location.region.code) {
+        throw const FormatException('Collector returned the wrong region');
+      }
       final days = (json['days'] as List).map((value) {
         final day = value as Map<String, dynamic>;
         final date = day['date'] as String;
@@ -67,6 +71,7 @@ class HttpShutdownScheduleRepository implements ShutdownScheduleRepository {
         throw const FormatException('Missing schedule');
       }
       return ShutdownSchedule(
+          region: location.region,
           city: json['city'] as String,
           street: json['street'] as String,
           building: json['building'] as String,

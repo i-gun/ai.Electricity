@@ -1,6 +1,6 @@
 # Local DTEK Shutdown Collector
 
-Experimental, undocumented DTEK Kyiv-region integration. The Flutter Windows
+Experimental, undocumented DTEK Kyiv-region and Kyiv-city integration. The Flutter Windows
 app uses `http://127.0.0.1:47831/shutdowns` by default. The collector is a
 separate local service, not bundled into or automatically started by Flutter.
 No DTEK credentials are required. DTEK availability and anti-bot challenges
@@ -17,10 +17,29 @@ npm start
 ```
 
 Leave the collector running. In the desktop app open Locations, edit a
-location, enter City, Street and Building, save, then select its schedule icon.
+location, select Region, enter City, Street and Building, then save. Open Status
+next to Stats and Sync; it follows the active location selected in the app bar.
+The location's schedule icon remains available as a shortcut.
 Each location owns its address independently; duplicate addresses are allowed.
 Empty, partial and archived location addresses never issue a schedule request.
-There is no automatic polling or address prefill.
+Status loads once when opened or when the selected address changes; refresh is
+explicit, with no periodic polling. Selecting Kyiv city fills the city field
+with `м. Київ`. Empty street/building fields still prevent any lookup.
+
+## Region Routing
+
+| Region | Code | Provider |
+| --- | --- | --- |
+| Kyiv region | `krem` | `https://www.dtek-krem.com.ua` |
+| Kyiv city | `kem` | `https://www.dtek-kem.com.ua` |
+
+Kyiv city is separate from the surrounding Kyiv region. Its address city must
+be Kyiv (`м. Київ`, `М. Київ`, `Київ` or `Kyiv`); no region is inferred from a
+street name. Existing schema-v13 locations migrate to Kyiv region, preserving
+the previous provider. Region is stored and encrypted-synced per location;
+legacy sync records without it preserve the existing selection. Cache entries
+are isolated by region as well as city, street and building. Unsupported
+region codes are rejected, never interpolated into an upstream URL.
 
 The first request opens a dedicated Edge profile. If DTEK displays a challenge,
 complete it in that browser and retry. No protection-bypass service is used.
@@ -35,12 +54,16 @@ group. Addresses are never inserted into a user's existing database by setup.
 
 ## Behavior And Limits
 
-- Fixed upstream: `https://www.dtek-krem.com.ua/ua/shutdowns` and its `/ua/ajax`
-  endpoint. City/street values must match uniquely; buildings match exactly.
+- Allowlisted upstreams: `https://www.dtek-krem.com.ua/ua/shutdowns` and
+  `https://www.dtek-kem.com.ua/ua/shutdowns`, each with its own `/ua/ajax` endpoint.
+  Kyiv city's flat street list needs no city form field; the regional site
+  resolves city then street. City/street matches must be unique; buildings match exactly.
 - The browser retains its dedicated session, but reloads source data for a new
   uncached lookup. Address lookups are serialized. Duplicate in-flight requests
   are shared; successful results are cached for three minutes, at most 100 entries.
-- `POST /shutdowns` accepts JSON `{ "city": "...", "street": "...", "building": "66" }`.
+- `POST /shutdowns` accepts JSON `{ "region": "krem", "city": "...", "street": "...", "building": "66" }`.
+  An omitted region defaults to `krem` for older clients. New clients always send it
+  and reject a mismatched response region.
   Address values are not put in URL query strings or logged. `GET /health`
   reports service readiness, not successful DTEK/browser access.
 - Responses contain the resolved address, group keys, raw DTEK update text,

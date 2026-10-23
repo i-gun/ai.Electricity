@@ -5,6 +5,9 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import 'src/shutdown_status.dart';
+export 'src/shutdown_status.dart';
+
 class SyncConflictItem {
   const SyncConflictItem({
     required this.id,
@@ -514,6 +517,14 @@ class _SharedHomeState extends State<SharedHome> {
         readings.where((r) => r.locationId == currentLocationId).toList();
     final locationZones =
         zones.where((z) => z.locationIds.contains(currentLocationId)).toList();
+    final activeLocations = locations
+        .where((location) => !location.isArchived)
+        .toList()
+      ..sort((first, second) => first.sortOrder.compareTo(second.sortOrder));
+    final activeLocation = activeLocations
+            .where((location) => location.id == currentLocationId)
+            .firstOrNull ??
+        activeLocations.firstOrNull;
     final pages = [
       ReadingsView(
           readings: locationReadings,
@@ -557,6 +568,8 @@ class _SharedHomeState extends State<SharedHome> {
                 range = r;
                 rangeKey = key;
               })),
+      ShutdownStatusView(
+          location: activeLocation, repository: widget.shutdownRepository),
       SyncSettingsView(
           isConnected: widget.isGoogleConnected,
           hasUnlockedVault: widget.hasGoogleVault,
@@ -570,8 +583,6 @@ class _SharedHomeState extends State<SharedHome> {
           onSyncNow: widget.onGoogleSyncNow,
           onResolveConflict: widget.onGoogleResolveConflict),
     ];
-    final activeLocations = locations.where((l) => !l.isArchived).toList()
-      ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
     return Scaffold(
         appBar: AppBar(title: const Text('ai.Electricity'), actions: [
           // Only shown once a second location exists, so a single-location
@@ -617,6 +628,9 @@ class _SharedHomeState extends State<SharedHome> {
                           icon: Icon(Icons.insights_outlined),
                           label: Text('Stats')),
                       NavigationRailDestination(
+                          icon: Icon(Icons.electric_bolt_outlined),
+                          label: Text('Status')),
+                      NavigationRailDestination(
                           icon: Icon(Icons.sync_outlined), label: Text('Sync'))
                     ]),
                 const VerticalDivider(width: 1),
@@ -625,6 +639,8 @@ class _SharedHomeState extends State<SharedHome> {
         bottomNavigationBar: widget.compact
             ? NavigationBar(
                 selectedIndex: tab,
+                labelBehavior:
+                    NavigationDestinationLabelBehavior.onlyShowSelected,
                 onDestinationSelected: (v) => setState(() => tab = v),
                 destinations: const [
                     NavigationDestination(
@@ -635,6 +651,9 @@ class _SharedHomeState extends State<SharedHome> {
                         icon: Icon(Icons.tune), label: 'Zones'),
                     NavigationDestination(
                         icon: Icon(Icons.insights_outlined), label: 'Stats'),
+                    NavigationDestination(
+                        icon: Icon(Icons.electric_bolt_outlined),
+                        label: 'Status'),
                     NavigationDestination(
                         icon: Icon(Icons.sync_outlined), label: 'Sync')
                   ])
@@ -833,6 +852,7 @@ class _SharedHomeState extends State<SharedHome> {
         ? Location(_nextId(locations.map((item) => item.id)), location.name,
             colorArgb: location.colorArgb,
             sortOrder: location.sortOrder,
+            region: location.region,
             city: location.city,
             street: location.street,
             building: location.building)
@@ -2700,6 +2720,7 @@ class _LocationDialogState extends State<_LocationDialog> {
   late final TextEditingController city;
   late final TextEditingController street;
   late final TextEditingController building;
+  late ShutdownRegion region;
   late int colorArgb;
   String? error;
 
@@ -2710,6 +2731,7 @@ class _LocationDialogState extends State<_LocationDialog> {
     city = TextEditingController(text: widget.initial?.city ?? '');
     street = TextEditingController(text: widget.initial?.street ?? '');
     building = TextEditingController(text: widget.initial?.building ?? '');
+    region = widget.initial?.region ?? ShutdownRegion.kyivRegion;
     colorArgb = widget.initial?.colorArgb ?? _zonePalette[0];
   }
 
@@ -2734,12 +2756,14 @@ class _LocationDialogState extends State<_LocationDialog> {
         initial == null
             ? Location(0, label,
                 colorArgb: colorArgb,
+                region: region,
                 city: city.text.trim(),
                 street: street.text.trim(),
                 building: building.text.trim())
             : initial.copyWith(
                 name: label,
                 colorArgb: colorArgb,
+                region: region,
                 city: city.text.trim(),
                 street: street.text.trim(),
                 building: building.text.trim()));
@@ -2757,6 +2781,22 @@ class _LocationDialogState extends State<_LocationDialog> {
                 autofocus: true,
                 textCapitalization: TextCapitalization.words,
                 decoration: const InputDecoration(labelText: 'Location name')),
+            DropdownButtonFormField<ShutdownRegion>(
+                initialValue: region,
+                decoration: const InputDecoration(labelText: 'Region'),
+                items: [
+                  for (final option in ShutdownRegion.values)
+                    DropdownMenuItem(value: option, child: Text(option.label))
+                ],
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(() {
+                    region = value;
+                    if (value == ShutdownRegion.kyivCity) {
+                      city.text = '\u043c. \u041a\u0438\u0457\u0432';
+                    }
+                  });
+                }),
             TextField(
                 controller: city,
                 decoration:

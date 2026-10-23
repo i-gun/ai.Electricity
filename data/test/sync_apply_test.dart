@@ -85,6 +85,7 @@ void main() {
         created.vault,
         envelope('address-create', 'location', 'remote-address', {
           ...payload,
+          'region': 'kem',
           'city': 'Village',
           'street': 'Main',
           'building': '66'
@@ -92,6 +93,7 @@ void main() {
     expect((await applier.applyAvailable()).conflicts, 0);
     var cabin = (await database.select(database.locations).get())
         .singleWhere((row) => row.syncId == 'remote-address');
+    expect(cabin.region, 'kem');
     expect(
         [cabin.city, cabin.street, cabin.building], ['Village', 'Main', '66']);
     await store.add(
@@ -103,6 +105,7 @@ void main() {
     cabin = (await database.select(database.locations).get())
         .singleWhere((row) => row.syncId == 'remote-address');
     expect(cabin.name, 'Legacy rename');
+    expect(cabin.region, 'kem');
     expect(
         [cabin.city, cabin.street, cabin.building], ['Village', 'Main', '66']);
     await store.add(
@@ -114,6 +117,7 @@ void main() {
             {
               ...payload,
               'name': 'Legacy rename',
+              'region': 'krem',
               'city': '',
               'street': '',
               'building': ''
@@ -123,6 +127,7 @@ void main() {
     cabin = (await database.select(database.locations).get())
         .singleWhere((row) => row.syncId == 'remote-address');
     expect([cabin.city, cabin.street, cabin.building], ['', '', '']);
+    expect(cabin.region, 'krem');
   });
 
   test('applies safe records in dependency order without outgoing echoes',

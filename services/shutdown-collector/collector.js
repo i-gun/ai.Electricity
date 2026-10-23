@@ -1,4 +1,27 @@
-const site = 'https://www.dtek-krem.com.ua';
+const sites = Object.freeze({
+  krem: 'https://www.dtek-krem.com.ua',
+  kem: 'https://www.dtek-kem.com.ua',
+});
+
+export function siteFor(region = 'krem') {
+  if (!Object.hasOwn(sites, region)) throw new Error('Unsupported region');
+  return sites[region];
+}
+
+export function resolveAddress(options, address) {
+  siteFor(address.region);
+  const kyiv = '\u043c. \u041a\u0438\u0457\u0432';
+  if (address.region === 'kem') {
+    const city = normalize(address.city).replace(/^(?:\u043c\u0456\u0441\u0442\u043e|\u043c\.?)\s*/, '');
+    if (!['\u043a\u0438\u0457\u0432', 'kyiv'].includes(city)) throw new Error('Kyiv city address required');
+  }
+  if (Array.isArray(options)) {
+    if (address.region !== 'kem') throw new Error('Missing locality list');
+    return { city: kyiv, street: selectAddress(options, address.street) };
+  }
+  const city = selectAddress(Object.keys(options), address.region === 'kem' ? kyiv : address.city);
+  return { city, street: selectAddress(options[city], address.street) };
+}
 
 export function normalize(value) {
   return String(value).trim().replace(/[\u2018\u2019\u02bc`]/g, "'")
@@ -15,12 +38,14 @@ export function selectAddress(options, requested) {
 
 export function validateAddress(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid address');
-  return Object.fromEntries(['city', 'street', 'building'].map(key => {
+  const region = value.region ?? 'krem';
+  siteFor(region);
+  return { region, ...Object.fromEntries(['city', 'street', 'building'].map(key => {
     if (typeof value[key] !== 'string' || !value[key].trim() || value[key].length > 160 || /[\u0000-\u001f]/.test(value[key])) {
       throw new Error('A complete address is required');
     }
     return [key, value[key].trim()];
-  }));
+  })) };
 }
 
 export function intervalsFor(hours) {
@@ -61,7 +86,7 @@ export function scheduleResult(raw, address, now = new Date()) {
     ? [Number(building.type) === 1 ? 'Planned maintenance' : building.sub_type || 'Reported outage',
       building.start_date, building.end_date].filter(Boolean).join(' | ')
     : null;
-  return { city: raw.city, street: raw.street, building: buildingKey, groups,
+  return { region: address.region ?? 'krem', city: raw.city, street: raw.street, building: buildingKey, groups,
     updatedAt: raw.fact.update, fetchedAt: now.toISOString(), days, currentOutage };
 }
 
@@ -69,21 +94,21 @@ export class DtekCollector {
   constructor(context) { this.context = context; }
 
   async collect(address) {
+    const site = siteFor(address.region);
     const page = await this.context.newPage();
     try {
       await page.goto(`${site}/ua/shutdowns`, { waitUntil: 'domcontentloaded', timeout: 25000 });
       await page.waitForFunction(() => typeof DisconSchedule !== 'undefined' &&
         DisconSchedule.streets && DisconSchedule.fact && document.querySelector('meta[name="csrf-token"]'),
       null, { timeout: 60000 });
-      const options = await page.evaluate(() => Object.fromEntries(
-        Object.entries(DisconSchedule.streets).map(([city, streets]) => [city, [...streets]])));
-      const city = selectAddress(Object.keys(options), address.city);
-      const street = selectAddress(options[city], address.street);
+      const options = await page.evaluate(() => DisconSchedule.streets);
+      const { city, street } = resolveAddress(options, address);
       const raw = await page.evaluate(async ({ city, street, site }) => {
         const endpoint = new URL(document.querySelector('meta[name="ajaxUrl"]').content, site);
         if (endpoint.origin !== site || endpoint.pathname !== '/ua/ajax') throw new Error('Unexpected endpoint');
         const body = new URLSearchParams({ method: 'getHomeNum' });
-        [{ name: 'city', value: city }, { name: 'street', value: street },
+        [...(document.querySelector('#discon_form [name="city"]') ? [{ name: 'city', value: city }] : []),
+          { name: 'street', value: street },
           { name: 'updateFact', value: DisconSchedule.fact.update }].forEach((field, index) => {
           body.set(`data[${index}][name]`, field.name);
           body.set(`data[${index}][value]`, field.value);
@@ -113,7 +138,8 @@ export class CachedCollector {
   }
 
   fetch(address) {
-    const key = JSON.stringify(['city', 'street', 'building'].map(field => normalize(address[field])));
+    const key = JSON.stringify([address.region ?? 'krem',
+      ...['city', 'street', 'building'].map(field => normalize(address[field]))]);
     const cached = this.cache.get(key);
     if (cached && Date.now() - cached.savedAt < this.ttl) return Promise.resolve(cached.value);
     if (this.pending.has(key)) return this.pending.get(key);

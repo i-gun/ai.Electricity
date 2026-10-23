@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -8,11 +10,14 @@ import 'package:fl_chart/fl_chart.dart';
 class _ShutdownRepository implements ShutdownScheduleRepository {
   int calls = 0;
   bool fail = false;
+  final requested = <Location>[];
   @override
   Future<ShutdownSchedule?> fetch(Location location) async {
     calls++;
+    requested.add(location);
     if (fail) throw const ShutdownException('Collector unavailable.');
     return ShutdownSchedule(
+        region: location.region,
         city: location.city,
         street: location.street,
         building: location.building,
@@ -25,7 +30,124 @@ class _ShutdownRepository implements ShutdownScheduleRepository {
   }
 }
 
+class _TestLocations implements LocationRepository {
+  const _TestLocations(this.locations);
+  final List<Location> locations;
+  @override
+  Stream<List<Location>> watchAll({bool includeArchived = false}) =>
+      Stream.value(locations);
+  @override
+  Future<void> save(Location location) async {}
+  @override
+  Future<void> delete(int id) async {}
+}
+
+class _DelayedShutdownRepository implements ShutdownScheduleRepository {
+  final pending = <int, Completer<ShutdownSchedule?>>{};
+  @override
+  Future<ShutdownSchedule?> fetch(Location location) =>
+      (pending[location.id] = Completer<ShutdownSchedule?>()).future;
+}
+
 void main() {
+  testWidgets('Status uses the active location and switches regions',
+      (tester) async {
+    final repository = _ShutdownRepository();
+    await tester.pumpWidget(MaterialApp(
+        home: SharedHome(
+            locationRepository: const _TestLocations([
+              Location(1, 'Region house',
+                  city: 'Village', street: 'Main', building: '66'),
+              Location(2, 'City apartment',
+                  region: ShutdownRegion.kyivCity,
+                  city: 'Kyiv',
+                  street: 'Other',
+                  building: '10'),
+            ]),
+            shutdownRepository: repository)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Status'));
+    await tester.pumpAndSettle();
+    expect(repository.requested.single.id, 1);
+    expect(find.text('Kyiv region'), findsOneWidget);
+    await tester.tap(find.byType(DropdownButton<int>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('City apartment').last);
+    await tester.pumpAndSettle();
+    expect(repository.requested.last.id, 2);
+    expect(repository.requested.last.region, ShutdownRegion.kyivCity);
+    expect(find.text('Kyiv city'), findsOneWidget);
+    expect(find.text('Village, Main, 66'), findsNothing);
+  });
+
+  testWidgets('Status remains unused for an empty address', (tester) async {
+    final repository = _ShutdownRepository();
+    await tester.pumpWidget(
+        MaterialApp(home: SharedHome(shutdownRepository: repository)));
+    await tester.tap(find.text('Status'));
+    await tester.pumpAndSettle();
+    expect(find.text('Address incomplete.'), findsOneWidget);
+    expect(repository.calls, 0);
+  });
+
+  testWidgets('Status ignores late results from a previous location',
+      (tester) async {
+    final repository = _DelayedShutdownRepository();
+    const first =
+        Location(1, 'First', city: 'Old', street: 'Main', building: '1');
+    const second = Location(2, 'Second',
+        region: ShutdownRegion.kyivCity,
+        city: 'Kyiv',
+        street: 'Other',
+        building: '2');
+    ShutdownSchedule result(Location location) => ShutdownSchedule(
+        region: location.region,
+        city: location.city,
+        street: location.street,
+        building: location.building,
+        groups: const ['GPV1.1'],
+        updatedAt: '23.10.2026',
+        fetchedAt: DateTime.utc(2026, 10, 23),
+        days: const [ShutdownDay('2026-10-23', [])]);
+    await tester.pumpWidget(MaterialApp(
+        home: ShutdownStatusView(location: first, repository: repository)));
+    await tester.pumpWidget(MaterialApp(
+        home: ShutdownStatusView(location: second, repository: repository)));
+    repository.pending[2]!.complete(result(second));
+    await tester.pumpAndSettle();
+    expect(find.text('Kyiv, Other, 2'), findsOneWidget);
+    repository.pending[1]!.complete(result(first));
+    await tester.pumpAndSettle();
+    expect(find.text('Kyiv, Other, 2'), findsOneWidget);
+    expect(find.text('Old, Main, 1'), findsNothing);
+  });
+
+  testWidgets('region editor saves Kyiv city with its locality',
+      (tester) async {
+    final repository = _ShutdownRepository();
+    await tester.pumpWidget(
+        MaterialApp(home: SharedHome(shutdownRepository: repository)));
+    await tester.tap(find.text('Locations'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Edit location'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(DropdownButtonFormField<ShutdownRegion>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Kyiv city').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Street (optional)'), 'Main');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Building (optional)'), '66');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Status'));
+    await tester.pumpAndSettle();
+    expect(repository.requested.single.region, ShutdownRegion.kyivCity);
+    expect(
+        repository.requested.single.city, '\u043c. \u041a\u0438\u0457\u0432');
+  });
+
   testWidgets('shutdown failure can retry on a narrow screen', (tester) async {
     await tester.binding.setSurfaceSize(const Size(360, 720));
     addTearDown(() => tester.binding.setSurfaceSize(null));

@@ -39,8 +39,12 @@ void main() {
         client: MockClient((request) async {
       expect(request.method, 'POST');
       expect(request.url.hasQuery, isFalse);
-      expect(jsonDecode(request.body),
-          {'city': 'Village', 'street': 'Main', 'building': '66'});
+      expect(jsonDecode(request.body), {
+        'region': 'krem',
+        'city': 'Village',
+        'street': 'Main',
+        'building': '66'
+      });
       return http.Response(
           jsonEncode({
             'city': 'Village',
@@ -64,6 +68,7 @@ void main() {
     addTearDown(repository.close);
     final result = (await repository.fetch(location))!;
     expect(result.city, 'Village');
+    expect(result.region, ShutdownRegion.kyivRegion);
     expect(result.street, 'Main');
     expect(result.building, '66');
     expect(result.groups, ['GPV4.1']);
@@ -73,6 +78,41 @@ void main() {
     expect(result.days.single.date, '2026-10-23');
     expect(result.days.single.intervals.single.startMinute, 1290);
     expect(result.days.single.intervals.single.endMinute, 1440);
+  });
+
+  test('Kyiv city is sent explicitly and wrong-region replies are rejected',
+      () async {
+    for (final responseRegion in ['kem', 'krem']) {
+      final repository = HttpShutdownScheduleRepository(endpoint,
+          client: MockClient((request) async {
+        expect((jsonDecode(request.body) as Map)['region'], 'kem');
+        return http.Response(
+            jsonEncode({
+              'region': responseRegion,
+              'city': 'Kyiv',
+              'street': 'Main',
+              'building': '66',
+              'groups': ['GPV1.1'],
+              'updatedAt': '23.10.2026 12:00',
+              'fetchedAt': '2026-10-23T09:00:00Z',
+              'days': [
+                {'date': '2026-10-23', 'intervals': []}
+              ]
+            }),
+            200);
+      }));
+      addTearDown(repository.close);
+      final request = repository.fetch(const Location(1, 'Kyiv',
+          region: ShutdownRegion.kyivCity,
+          city: 'Kyiv',
+          street: 'Main',
+          building: '66'));
+      if (responseRegion == 'kem') {
+        expect((await request)!.region, ShutdownRegion.kyivCity);
+      } else {
+        await expectLater(request, throwsA(isA<ShutdownException>()));
+      }
+    }
   });
 
   test('rejects unsafe remote HTTP and credentials', () {
