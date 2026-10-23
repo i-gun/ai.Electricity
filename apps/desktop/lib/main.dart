@@ -29,6 +29,9 @@ void main() {
       zoneRepository: DriftTariffZoneRepository(database),
       rateRepository: DriftTariffRateRepository(database),
       locationRepository: DriftLocationRepository(database),
+      shutdownRepository: HttpShutdownScheduleRepository(Uri.parse(
+          const String.fromEnvironment('SHUTDOWN_COLLECTOR_URL',
+              defaultValue: 'http://127.0.0.1:47831/shutdowns'))),
       isGoogleConnected: () async => await credentialStore.read() != null,
       hasGoogleVault: () async => await syncSession.hasUnlockedVault,
       loadSyncConflicts: () async => [
@@ -91,6 +94,7 @@ class DesktopApp extends StatelessWidget {
       this.zoneRepository,
       this.rateRepository,
       this.locationRepository,
+      this.shutdownRepository,
       this.isGoogleConnected,
       this.hasGoogleVault,
       this.loadSyncConflicts,
@@ -106,6 +110,7 @@ class DesktopApp extends StatelessWidget {
   final TariffZoneRepository? zoneRepository;
   final TariffRateRepository? rateRepository;
   final LocationRepository? locationRepository;
+  final ShutdownScheduleRepository? shutdownRepository;
   final Future<bool> Function()? isGoogleConnected;
   final Future<bool> Function()? hasGoogleVault;
   final Future<List<SyncConflictItem>> Function()? loadSyncConflicts;
@@ -131,6 +136,7 @@ class DesktopApp extends StatelessWidget {
           zoneRepository: zoneRepository,
           rateRepository: rateRepository,
           locationRepository: locationRepository,
+          shutdownRepository: shutdownRepository,
           isGoogleConnected: isGoogleConnected,
           hasGoogleVault: hasGoogleVault,
           loadSyncConflicts: loadSyncConflicts,

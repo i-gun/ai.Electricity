@@ -95,19 +95,42 @@ class Location {
   const Location(this.id, this.name,
       {this.colorArgb = 0xff008577,
       this.sortOrder = 0,
-      this.isArchived = false});
+      this.isArchived = false,
+      this.city = '',
+      this.street = '',
+      this.building = ''});
   final int id;
   final String name;
   final int colorArgb;
   final int sortOrder;
   final bool isArchived;
 
+  /// Optional address owned by this location, independent of other locations.
+  final String city;
+  final String street;
+  final String building;
+
+  /// Whether all fields needed for a shutdown lookup are present.
+  bool get hasShutdownAddress =>
+      city.trim().isNotEmpty &&
+      street.trim().isNotEmpty &&
+      building.trim().isNotEmpty;
+
   Location copyWith(
-          {String? name, int? colorArgb, int? sortOrder, bool? isArchived}) =>
+          {String? name,
+          int? colorArgb,
+          int? sortOrder,
+          bool? isArchived,
+          String? city,
+          String? street,
+          String? building}) =>
       Location(id, name ?? this.name,
           colorArgb: colorArgb ?? this.colorArgb,
           sortOrder: sortOrder ?? this.sortOrder,
-          isArchived: isArchived ?? this.isArchived);
+          isArchived: isArchived ?? this.isArchived,
+          city: city ?? this.city,
+          street: street ?? this.street,
+          building: building ?? this.building);
 }
 
 class TariffZone {

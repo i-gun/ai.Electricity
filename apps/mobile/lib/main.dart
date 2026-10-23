@@ -4,6 +4,7 @@ import 'package:ai_electricity_core/core.dart';
 import 'package:flutter/material.dart';
 
 void main() {
+  const collectorUrl = String.fromEnvironment('SHUTDOWN_COLLECTOR_URL');
   final database = openElectricityDatabase();
   final secureBackend = FlutterSecureCredentialBackend();
   final credentialStore = SecureGoogleCredentialStore(secureBackend);
@@ -22,6 +23,9 @@ void main() {
       zoneRepository: DriftTariffZoneRepository(database),
       rateRepository: DriftTariffRateRepository(database),
       locationRepository: DriftLocationRepository(database),
+      shutdownRepository: collectorUrl.isEmpty
+          ? null
+          : HttpShutdownScheduleRepository(Uri.parse(collectorUrl)),
       isGoogleConnected: () async => await credentialStore.read() != null,
       hasGoogleVault: () async => await syncSession.hasUnlockedVault,
       loadSyncConflicts: () async => [
@@ -84,6 +88,7 @@ class MobileApp extends StatelessWidget {
       this.zoneRepository,
       this.rateRepository,
       this.locationRepository,
+      this.shutdownRepository,
       this.isGoogleConnected,
       this.hasGoogleVault,
       this.loadSyncConflicts,
@@ -99,6 +104,7 @@ class MobileApp extends StatelessWidget {
   final TariffZoneRepository? zoneRepository;
   final TariffRateRepository? rateRepository;
   final LocationRepository? locationRepository;
+  final ShutdownScheduleRepository? shutdownRepository;
   final Future<bool> Function()? isGoogleConnected;
   final Future<bool> Function()? hasGoogleVault;
   final Future<List<SyncConflictItem>> Function()? loadSyncConflicts;
@@ -125,6 +131,7 @@ class MobileApp extends StatelessWidget {
           zoneRepository: zoneRepository,
           rateRepository: rateRepository,
           locationRepository: locationRepository,
+          shutdownRepository: shutdownRepository,
           isGoogleConnected: isGoogleConnected,
           hasGoogleVault: hasGoogleVault,
           loadSyncConflicts: loadSyncConflicts,

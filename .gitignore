@@ -9,6 +9,7 @@ coverage/
 .flutter-plugins
 .flutter-plugins-dependencies
 .pub-cache/
+node_modules/
 
 # IDE and OS files
 .idea/

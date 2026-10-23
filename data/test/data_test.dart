@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -9,7 +11,7 @@ void main() {
     final database = ElectricityDatabase(NativeDatabase.memory());
     addTearDown(database.close);
 
-    expect(database.schemaVersion, 12);
+    expect(database.schemaVersion, 13);
     expect(await database.select(database.tariffZones).get(), hasLength(3));
     final seededLocations = await database.select(database.locations).get();
     expect(seededLocations, hasLength(1));
@@ -37,6 +39,53 @@ void main() {
     final secondZones = await second.select(second.tariffZones).get();
     expect({for (final zone in firstZones) zone.code: zone.syncId},
         {for (final zone in secondZones) zone.code: zone.syncId});
+  });
+
+  test('location addresses persist independently and enter the sync journal',
+      () async {
+    final database = ElectricityDatabase(NativeDatabase.memory());
+    addTearDown(database.close);
+    final repository = DriftLocationRepository(database);
+    for (final name in ['Cabin', 'Other']) {
+      await repository.save(domain.Location(0, name,
+          city: ' Village ', street: ' Main ', building: '66'));
+    }
+    final locations = await repository.watchAll().first;
+    final cabin = locations.singleWhere((row) => row.name == 'Cabin');
+    final other = locations.singleWhere((row) => row.name == 'Other');
+    expect(cabin.city, 'Village');
+    expect(cabin.street, 'Main');
+    expect(cabin.building, '66');
+    expect(other.hasShutdownAddress, isTrue);
+    await repository.save(cabin.copyWith(city: '', street: '', building: ''));
+    final updated = await repository.watchAll().first;
+    expect(updated.singleWhere((row) => row.id == cabin.id).hasShutdownAddress,
+        isFalse);
+    expect(updated.singleWhere((row) => row.id == other.id).hasShutdownAddress,
+        isTrue);
+    final pending = await DriftSyncJournal(database).pending();
+    final payload = jsonDecode(pending.last.payload) as Map<String, dynamic>;
+    expect(payload['city'], '');
+    expect(payload['street'], '');
+    expect(payload['building'], '');
+  });
+
+  test('schema v12 locations migrate with empty addresses and retain identity',
+      () async {
+    final database = ElectricityDatabase(NativeDatabase.memory(setup: (db) {
+      db.execute(
+          'CREATE TABLE locations (id INTEGER PRIMARY KEY, sync_id TEXT, '
+          'name TEXT NOT NULL, color_argb INTEGER NOT NULL, sort_order INTEGER NOT NULL, '
+          'is_archived INTEGER NOT NULL DEFAULT 0)');
+      db.execute(
+          "INSERT INTO locations VALUES (42, 'stable', 'Home', 123, 0, 0)");
+      db.execute('PRAGMA user_version = 12');
+    }));
+    addTearDown(database.close);
+    final row = (await database.select(database.locations).get()).single;
+    expect(row.id, 42);
+    expect(row.syncId, 'stable');
+    expect([row.city, row.street, row.building], ['', '', '']);
   });
 
   test('schema-v8 upgrades normalize exact seeds and adds sync history fields',

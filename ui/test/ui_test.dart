@@ -5,7 +5,109 @@ import 'package:ai_electricity_core/core.dart';
 import 'package:ai_electricity_ui/ui.dart';
 import 'package:fl_chart/fl_chart.dart';
 
+class _ShutdownRepository implements ShutdownScheduleRepository {
+  int calls = 0;
+  bool fail = false;
+  @override
+  Future<ShutdownSchedule?> fetch(Location location) async {
+    calls++;
+    if (fail) throw const ShutdownException('Collector unavailable.');
+    return ShutdownSchedule(
+        city: location.city,
+        street: location.street,
+        building: location.building,
+        groups: const ['GPV4.1'],
+        updatedAt: '22.10.2026 21:44',
+        fetchedAt: DateTime.utc(2026, 10, 23),
+        days: const [
+          ShutdownDay('2026-10-23', [ShutdownInterval(660, 900)])
+        ]);
+  }
+}
+
 void main() {
+  testWidgets('shutdown failure can retry on a narrow screen', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 720));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final repository = _ShutdownRepository()..fail = true;
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: LocationsView(
+                locations: const [
+          Location(1, 'Home', city: 'Village', street: 'Main', building: '66')
+        ],
+                zones: const [],
+                shutdownRepository: repository,
+                onToggleLocation: (_) {},
+                onAddLocation: () {},
+                onEditLocation: (_) {},
+                onDeleteLocation: (_) {}))));
+    await tester.tap(find.byTooltip('Shutdown schedule'));
+    await tester.pumpAndSettle();
+    expect(find.text('Collector unavailable.'), findsOneWidget);
+    expect(find.textContaining('No planned outages'), findsNothing);
+    repository.fail = false;
+    await tester.tap(find.byTooltip('Refresh schedule'));
+    await tester.pumpAndSettle();
+    expect(find.text('11:00 - 15:00'), findsOneWidget);
+    expect(repository.calls, 2);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('empty location address never enables shutdown fetch',
+      (tester) async {
+    final repository = _ShutdownRepository();
+    await tester.pumpWidget(
+        MaterialApp(home: SharedHome(shutdownRepository: repository)));
+    await tester.tap(find.text('Locations'));
+    await tester.pumpAndSettle();
+    final button = tester.widget<IconButton>(find.byWidgetPredicate((widget) =>
+        widget is IconButton && widget.tooltip == 'Shutdown schedule'));
+    expect(button.onPressed, isNull);
+    expect(repository.calls, 0);
+  });
+
+  testWidgets('address edit enables fetching and clearing disables it',
+      (tester) async {
+    final repository = _ShutdownRepository();
+    await tester.pumpWidget(
+        MaterialApp(home: SharedHome(shutdownRepository: repository)));
+    await tester.tap(find.text('Locations'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Edit location'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.widgetWithText(TextField, 'City (optional)'), 'Village');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Street (optional)'), 'Main');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Building (optional)'), '66');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    expect(repository.calls, 0);
+    await tester.tap(find.byTooltip('Shutdown schedule'));
+    await tester.pumpAndSettle();
+    expect(repository.calls, 1);
+    expect(find.text('Group: GPV4.1'), findsOneWidget);
+    expect(find.text('11:00 - 15:00'), findsOneWidget);
+    expect(find.text('2026-10-23'), findsOneWidget);
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Edit location'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Building (optional)'), '');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    expect(
+        tester
+            .widget<IconButton>(find.byWidgetPredicate((widget) =>
+                widget is IconButton && widget.tooltip == 'Shutdown schedule'))
+            .onPressed,
+        isNull);
+    expect(repository.calls, 1);
+  });
+
   testWidgets('creates the shared light theme', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
