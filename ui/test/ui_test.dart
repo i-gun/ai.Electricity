@@ -10,6 +10,7 @@ import 'package:fl_chart/fl_chart.dart';
 class _ShutdownRepository implements ShutdownScheduleRepository {
   int calls = 0;
   bool fail = false;
+  List<ShutdownDay>? days;
   final requested = <Location>[];
   @override
   Future<ShutdownSchedule?> fetch(Location location) async {
@@ -24,9 +25,10 @@ class _ShutdownRepository implements ShutdownScheduleRepository {
         groups: const ['GPV4.1'],
         updatedAt: '22.10.2026 21:44',
         fetchedAt: DateTime.utc(2026, 10, 23),
-        days: const [
-          ShutdownDay('2026-10-23', [ShutdownInterval(660, 900)])
-        ]);
+        days: days ??
+            const [
+              ShutdownDay('2026-10-23', [ShutdownInterval(660, 900)])
+            ]);
   }
 }
 
@@ -50,6 +52,89 @@ class _DelayedShutdownRepository implements ShutdownScheduleRepository {
 }
 
 void main() {
+  testWidgets(
+      'Status timeline shows full and half hours and switches published dates',
+      (tester) async {
+    final repository = _ShutdownRepository()
+      ..days = const [
+        ShutdownDay('2026-10-23',
+            [ShutdownInterval(90, 210), ShutdownInterval(1410, 1440)]),
+        ShutdownDay('2026-10-24', []),
+      ];
+    await tester.pumpWidget(MaterialApp(
+        theme: lightTheme(),
+        home: Scaffold(
+            body: ShutdownStatusView(
+                location: const Location(1, 'Home',
+                    city: 'Village', street: 'Main', building: '66'),
+                repository: repository))));
+    await tester.pumpAndSettle();
+    final context = tester.element(find.byType(ShutdownStatusView));
+    final scheme = Theme.of(context).colorScheme;
+    Color color(int hour, int half) => tester
+        .widget<ColoredBox>(find.byKey(ValueKey('shutdown-half-$hour-$half')))
+        .color;
+    expect(color(0, 0), scheme.surfaceContainerLowest);
+    expect(color(1, 0), scheme.surfaceContainerLowest);
+    expect(color(1, 1), scheme.errorContainer);
+    expect(color(2, 0), scheme.errorContainer);
+    expect(color(2, 1), scheme.errorContainer);
+    expect(color(3, 0), scheme.errorContainer);
+    expect(color(3, 1), scheme.surfaceContainerLowest);
+    expect(color(23, 1), scheme.errorContainer);
+    expect(find.text('01:30 - 03:30'), findsOneWidget);
+    expect(find.text('23:30 - 24:00'), findsOneWidget);
+    expect(find.text('First 30 min'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('shutdown-day-2026-10-24')));
+    await tester.pumpAndSettle();
+    expect(find.text('No planned outages published for this date.'),
+        findsOneWidget);
+    expect(find.text('01:30 - 03:30'), findsNothing);
+    expect(color(2, 0), scheme.surfaceContainerLowest);
+    expect(repository.calls, 1);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'Status timeline respects light and dark themes on narrow screens',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 720));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    for (final theme in [lightTheme(), darkTheme()]) {
+      final repository = _ShutdownRepository();
+      await tester.pumpWidget(MaterialApp(
+          theme: theme,
+          home: Scaffold(
+              body: ShutdownStatusView(
+                  key: ValueKey(theme.brightness),
+                  location: const Location(1, 'Home',
+                      city: 'Village', street: 'Main', building: '66'),
+                  repository: repository))));
+      await tester.pumpAndSettle();
+      final scheme =
+          Theme.of(tester.element(find.byType(ShutdownStatusView))).colorScheme;
+      expect(
+          tester
+              .widget<ColoredBox>(
+                  find.byKey(const ValueKey('shutdown-half-11-0')))
+              .color,
+          scheme.errorContainer);
+      expect(
+          tester
+              .widget<ColoredBox>(
+                  find.byKey(const ValueKey('shutdown-half-0-0')))
+              .color,
+          scheme.surfaceContainerLowest);
+      await tester.drag(find.byKey(const ValueKey('shutdown-timeline-scroll')),
+          const Offset(-1000, 0));
+      await tester.pumpAndSettle();
+      final lastHour = tester.getRect(find.text('23-24'));
+      expect(lastHour.right, lessThanOrEqualTo(360));
+      expect(lastHour.left, greaterThanOrEqualTo(0));
+      expect(tester.takeException(), isNull);
+    }
+  });
+
   testWidgets('Status uses the active location and switches regions',
       (tester) async {
     final repository = _ShutdownRepository();
