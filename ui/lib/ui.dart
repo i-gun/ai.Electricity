@@ -5,6 +5,11 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import 'src/shutdown_status.dart';
+import 'src/shutdown_indicator.dart';
+export 'src/shutdown_status.dart';
+export 'src/shutdown_indicator.dart';
+
 class SyncConflictItem {
   const SyncConflictItem({
     required this.id,
@@ -394,6 +399,7 @@ class SharedHome extends StatefulWidget {
       this.zoneRepository,
       this.rateRepository,
       this.locationRepository,
+      this.shutdownRepository,
       this.isGoogleConnected,
       this.hasGoogleVault,
       this.loadSyncConflicts,
@@ -410,6 +416,7 @@ class SharedHome extends StatefulWidget {
   final TariffZoneRepository? zoneRepository;
   final TariffRateRepository? rateRepository;
   final LocationRepository? locationRepository;
+  final ShutdownScheduleRepository? shutdownRepository;
   final Future<bool> Function()? isGoogleConnected;
   final Future<bool> Function()? hasGoogleVault;
   final Future<List<SyncConflictItem>> Function()? loadSyncConflicts;
@@ -452,6 +459,7 @@ class _SharedHomeState extends State<SharedHome> {
   String rangeKey = '1W';
   String currencyCode = 'EUR';
   int currentLocationId = 1;
+  final _shutdownStatus = ShutdownStatusController();
 
   List<TariffZone> get activeZones => zonesAt(currentLocationId);
 
@@ -504,6 +512,12 @@ class _SharedHomeState extends State<SharedHome> {
   }
 
   @override
+  void dispose() {
+    _shutdownStatus.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     // A zone can be linked to more than one location, so the Readings tab and
     // the Stats tab's "Per zone" mode are scoped to whichever location is
@@ -512,6 +526,15 @@ class _SharedHomeState extends State<SharedHome> {
         readings.where((r) => r.locationId == currentLocationId).toList();
     final locationZones =
         zones.where((z) => z.locationIds.contains(currentLocationId)).toList();
+    final activeLocations = locations
+        .where((location) => !location.isArchived)
+        .toList()
+      ..sort((first, second) => first.sortOrder.compareTo(second.sortOrder));
+    final activeLocation = activeLocations
+            .where((location) => location.id == currentLocationId)
+            .firstOrNull ??
+        activeLocations.firstOrNull;
+    _shutdownStatus.configure(activeLocation, widget.shutdownRepository);
     final pages = [
       ReadingsView(
           readings: locationReadings,
@@ -522,6 +545,7 @@ class _SharedHomeState extends State<SharedHome> {
       LocationsView(
           locations: locations,
           zones: zones,
+          shutdownRepository: widget.shutdownRepository,
           onToggleLocation: _toggleLocation,
           onAddLocation: _addLocation,
           onEditLocation: _editLocation,
@@ -554,6 +578,10 @@ class _SharedHomeState extends State<SharedHome> {
                 range = r;
                 rangeKey = key;
               })),
+      ShutdownStatusView(
+          location: activeLocation,
+          repository: widget.shutdownRepository,
+          controller: _shutdownStatus),
       SyncSettingsView(
           isConnected: widget.isGoogleConnected,
           hasUnlockedVault: widget.hasGoogleVault,
@@ -567,8 +595,6 @@ class _SharedHomeState extends State<SharedHome> {
           onSyncNow: widget.onGoogleSyncNow,
           onResolveConflict: widget.onGoogleResolveConflict),
     ];
-    final activeLocations = locations.where((l) => !l.isArchived).toList()
-      ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
     return Scaffold(
         appBar: AppBar(title: const Text('ai.Electricity'), actions: [
           // Only shown once a second location exists, so a single-location
@@ -600,20 +626,23 @@ class _SharedHomeState extends State<SharedHome> {
                     selectedIndex: tab,
                     onDestinationSelected: (v) => setState(() => tab = v),
                     labelType: NavigationRailLabelType.all,
-                    destinations: const [
-                      NavigationRailDestination(
+                    destinations: [
+                      const NavigationRailDestination(
                           icon: Icon(Icons.speed_outlined),
                           label: Text('Readings')),
-                      NavigationRailDestination(
+                      const NavigationRailDestination(
                           icon: Icon(Icons.home_outlined),
                           label: Text('Locations')),
-                      NavigationRailDestination(
+                      const NavigationRailDestination(
                           icon: Icon(Icons.tune),
                           label: Text('Zones & tariffs')),
-                      NavigationRailDestination(
+                      const NavigationRailDestination(
                           icon: Icon(Icons.insights_outlined),
                           label: Text('Stats')),
                       NavigationRailDestination(
+                          icon: ShutdownStatusBulb(controller: _shutdownStatus),
+                          label: const Text('Status')),
+                      const NavigationRailDestination(
                           icon: Icon(Icons.sync_outlined), label: Text('Sync'))
                     ]),
                 const VerticalDivider(width: 1),
@@ -622,17 +651,22 @@ class _SharedHomeState extends State<SharedHome> {
         bottomNavigationBar: widget.compact
             ? NavigationBar(
                 selectedIndex: tab,
+                labelBehavior:
+                    NavigationDestinationLabelBehavior.onlyShowSelected,
                 onDestinationSelected: (v) => setState(() => tab = v),
-                destinations: const [
-                    NavigationDestination(
+                destinations: [
+                    const NavigationDestination(
                         icon: Icon(Icons.speed_outlined), label: 'Readings'),
-                    NavigationDestination(
+                    const NavigationDestination(
                         icon: Icon(Icons.home_outlined), label: 'Locations'),
-                    NavigationDestination(
+                    const NavigationDestination(
                         icon: Icon(Icons.tune), label: 'Zones'),
-                    NavigationDestination(
+                    const NavigationDestination(
                         icon: Icon(Icons.insights_outlined), label: 'Stats'),
                     NavigationDestination(
+                        icon: ShutdownStatusBulb(controller: _shutdownStatus),
+                        label: 'Status'),
+                    const NavigationDestination(
                         icon: Icon(Icons.sync_outlined), label: 'Sync')
                   ])
             : null,
@@ -828,7 +862,12 @@ class _SharedHomeState extends State<SharedHome> {
     if (location == null) return;
     await _saveLocation(widget.locationRepository == null
         ? Location(_nextId(locations.map((item) => item.id)), location.name,
-            colorArgb: location.colorArgb, sortOrder: location.sortOrder)
+            colorArgb: location.colorArgb,
+            sortOrder: location.sortOrder,
+            region: location.region,
+            city: location.city,
+            street: location.street,
+            building: location.building)
         : location);
   }
 
@@ -1366,12 +1405,14 @@ class LocationsView extends StatelessWidget {
       {super.key,
       required this.locations,
       required this.zones,
+      this.shutdownRepository,
       required this.onToggleLocation,
       required this.onAddLocation,
       required this.onEditLocation,
       required this.onDeleteLocation});
   final List<Location> locations;
   final List<TariffZone> zones;
+  final ShutdownScheduleRepository? shutdownRepository;
   final ValueChanged<Location> onToggleLocation;
   final VoidCallback onAddLocation;
   final ValueChanged<Location> onEditLocation;
@@ -1403,32 +1444,66 @@ class LocationsView extends StatelessWidget {
           for (final location in locations)
             Card(
                 margin: const EdgeInsets.only(bottom: 12),
-                child: ListTile(
-                    leading: CircleAvatar(
-                        backgroundColor: Color(location.colorArgb),
-                        child: Text(
-                            location.name.isEmpty
-                                ? '?'
-                                : location.name[0].toUpperCase(),
-                            style: const TextStyle(color: Colors.white))),
-                    title: Text(location.name),
-                    subtitle: Text(
-                        '${location.isArchived ? 'Archived' : 'Active'} • ${zones.where((zone) => zone.locationIds.contains(location.id)).length} zone(s) linked'),
-                    trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                      Semantics(
-                          label: '${location.name} active',
-                          child: Switch(
-                              value: !location.isArchived,
-                              onChanged: (_) => onToggleLocation(location))),
-                      IconButton(
-                          tooltip: 'Edit location',
-                          icon: const Icon(Icons.edit_outlined),
-                          onPressed: () => onEditLocation(location)),
-                      IconButton(
-                          tooltip: 'Delete location',
-                          icon: const Icon(Icons.delete_outline),
-                          onPressed: () => onDeleteLocation(location)),
-                    ]))),
+                child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: CircleAvatar(
+                                  backgroundColor: Color(location.colorArgb),
+                                  child: Text(
+                                      location.name.isEmpty
+                                          ? '?'
+                                          : location.name[0].toUpperCase(),
+                                      style: const TextStyle(
+                                          color: Colors.white))),
+                              title: Text(location.name),
+                              subtitle: Text(
+                                  '${location.isArchived ? 'Archived' : 'Active'} • ${zones.where((zone) => zone.locationIds.contains(location.id)).length} zone(s) linked'
+                                  '${[
+                                location.city,
+                                location.street,
+                                location.building
+                              ].any((value) => value.isNotEmpty) ? '\n${[
+                                      location.city,
+                                      location.street,
+                                      location.building
+                                    ].where((value) => value.isNotEmpty).join(', ')}' : ''}')),
+                          Wrap(
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                IconButton(
+                                    tooltip: 'Shutdown schedule',
+                                    icon: const Icon(Icons.event_note_outlined),
+                                    onPressed: shutdownRepository != null &&
+                                            location.hasShutdownAddress &&
+                                            !location.isArchived
+                                        ? () => showDialog<void>(
+                                            context: context,
+                                            builder: (_) => _ShutdownDialog(
+                                                location: location,
+                                                repository:
+                                                    shutdownRepository!))
+                                        : null),
+                                Semantics(
+                                    label: '${location.name} active',
+                                    child: Switch(
+                                        value: !location.isArchived,
+                                        onChanged: (_) =>
+                                            onToggleLocation(location))),
+                                IconButton(
+                                    tooltip: 'Edit location',
+                                    icon: const Icon(Icons.edit_outlined),
+                                    onPressed: () => onEditLocation(location)),
+                                IconButton(
+                                    tooltip: 'Delete location',
+                                    icon: const Icon(Icons.delete_outline),
+                                    onPressed: () =>
+                                        onDeleteLocation(location)),
+                              ]),
+                        ]))),
         ]))
       ]));
 }
@@ -2654,6 +2729,10 @@ class _LocationDialog extends StatefulWidget {
 
 class _LocationDialogState extends State<_LocationDialog> {
   late final TextEditingController name;
+  late final TextEditingController city;
+  late final TextEditingController street;
+  late final TextEditingController building;
+  late ShutdownRegion region;
   late int colorArgb;
   String? error;
 
@@ -2661,12 +2740,19 @@ class _LocationDialogState extends State<_LocationDialog> {
   void initState() {
     super.initState();
     name = TextEditingController(text: widget.initial?.name ?? '');
+    city = TextEditingController(text: widget.initial?.city ?? '');
+    street = TextEditingController(text: widget.initial?.street ?? '');
+    building = TextEditingController(text: widget.initial?.building ?? '');
+    region = widget.initial?.region ?? ShutdownRegion.kyivRegion;
     colorArgb = widget.initial?.colorArgb ?? _zonePalette[0];
   }
 
   @override
   void dispose() {
     name.dispose();
+    city.dispose();
+    street.dispose();
+    building.dispose();
     super.dispose();
   }
 
@@ -2680,8 +2766,19 @@ class _LocationDialogState extends State<_LocationDialog> {
     Navigator.pop(
         context,
         initial == null
-            ? Location(0, label, colorArgb: colorArgb)
-            : initial.copyWith(name: label, colorArgb: colorArgb));
+            ? Location(0, label,
+                colorArgb: colorArgb,
+                region: region,
+                city: city.text.trim(),
+                street: street.text.trim(),
+                building: building.text.trim())
+            : initial.copyWith(
+                name: label,
+                colorArgb: colorArgb,
+                region: region,
+                city: city.text.trim(),
+                street: street.text.trim(),
+                building: building.text.trim()));
   }
 
   @override
@@ -2689,12 +2786,41 @@ class _LocationDialogState extends State<_LocationDialog> {
         title: Text(widget.initial == null ? 'New location' : 'Edit location'),
         content: SizedBox(
           width: 360,
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
+          child: SingleChildScrollView(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
             TextField(
                 controller: name,
                 autofocus: true,
                 textCapitalization: TextCapitalization.words,
                 decoration: const InputDecoration(labelText: 'Location name')),
+            DropdownButtonFormField<ShutdownRegion>(
+                initialValue: region,
+                decoration: const InputDecoration(labelText: 'Region'),
+                items: [
+                  for (final option in ShutdownRegion.values)
+                    DropdownMenuItem(value: option, child: Text(option.label))
+                ],
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(() {
+                    region = value;
+                    if (value == ShutdownRegion.kyivCity) {
+                      city.text = '\u043c. \u041a\u0438\u0457\u0432';
+                    }
+                  });
+                }),
+            TextField(
+                controller: city,
+                decoration:
+                    const InputDecoration(labelText: 'City (optional)')),
+            TextField(
+                controller: street,
+                decoration:
+                    const InputDecoration(labelText: 'Street (optional)')),
+            TextField(
+                controller: building,
+                decoration:
+                    const InputDecoration(labelText: 'Building (optional)')),
             const SizedBox(height: 16),
             Align(
                 alignment: Alignment.centerLeft,
@@ -2721,7 +2847,7 @@ class _LocationDialogState extends State<_LocationDialog> {
                       child: Text(error!,
                           style: TextStyle(
                               color: Theme.of(context).colorScheme.error)))),
-          ]),
+          ])),
         ),
         actions: [
           TextButton(
@@ -2730,6 +2856,112 @@ class _LocationDialogState extends State<_LocationDialog> {
           FilledButton(onPressed: _save, child: const Text('Save')),
         ],
       );
+}
+
+class _ShutdownDialog extends StatefulWidget {
+  const _ShutdownDialog({required this.location, required this.repository});
+  final Location location;
+  final ShutdownScheduleRepository repository;
+  @override
+  State<_ShutdownDialog> createState() => _ShutdownDialogState();
+}
+
+class _ShutdownDialogState extends State<_ShutdownDialog> {
+  bool loading = true;
+  ShutdownSchedule? schedule;
+  String? error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (!widget.location.hasShutdownAddress || widget.location.isArchived) {
+      return;
+    }
+    setState(() {
+      loading = true;
+      error = null;
+      schedule = null;
+    });
+    try {
+      final result = await widget.repository.fetch(widget.location);
+      if (mounted) {
+        setState(() {
+          schedule = result;
+          if (result == null) error = 'No shutdown address is available.';
+        });
+      }
+    } catch (failure) {
+      if (mounted) {
+        setState(() => error = failure is ShutdownException
+            ? failure.message
+            : 'Shutdown schedule unavailable. Try again.');
+      }
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  String _time(int minutes) =>
+      '${(minutes ~/ 60).toString().padLeft(2, '0')}:${(minutes % 60).toString().padLeft(2, '0')}';
+
+  @override
+  Widget build(BuildContext context) {
+    final result = schedule;
+    return AlertDialog(
+      title: Text('${widget.location.name}: shutdowns'),
+      content: SizedBox(
+          width: 480,
+          child: SingleChildScrollView(
+              child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                if (loading) const Center(child: CircularProgressIndicator()),
+                if (error != null)
+                  Text(error!,
+                      style: TextStyle(
+                          color: Theme.of(context).colorScheme.error)),
+                if (result != null) ...[
+                  Text('${result.city}, ${result.street}, ${result.building}'),
+                  const SizedBox(height: 8),
+                  Text('Group: ${result.groups.join(', ')}'),
+                  Text('DTEK updated: ${result.updatedAt}'),
+                  Text(
+                      'Fetched: ${DateFormat('yyyy-MM-dd HH:mm').format(result.fetchedAt.toLocal())}'),
+                  const Text('Schedule time zone: Europe/Kyiv'),
+                  if (result.groups.length > 1)
+                    const Text('Intervals cover any listed group.'),
+                  if (result.currentOutage != null)
+                    Padding(
+                        padding: const EdgeInsets.only(top: 12),
+                        child: Text(result.currentOutage!)),
+                  for (final day in result.days) ...[
+                    const Divider(height: 24),
+                    Text(day.date,
+                        style: Theme.of(context).textTheme.titleMedium),
+                    if (day.intervals.isEmpty)
+                      const Text('No planned outages published for this date.'),
+                    for (final interval in day.intervals)
+                      Text(
+                          '${_time(interval.startMinute)} - ${_time(interval.endMinute)}'),
+                  ],
+                ],
+              ]))),
+      actions: [
+        IconButton(
+            tooltip: 'Refresh schedule',
+            onPressed: loading ? null : _load,
+            icon: const Icon(Icons.refresh)),
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close')),
+      ],
+    );
+  }
 }
 
 String _money(BuildContext context, Money money) => NumberFormat.currency(

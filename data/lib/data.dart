@@ -19,6 +19,7 @@ export 'src/secure_credentials.dart';
 export 'src/desktop_google_oauth.dart';
 export 'src/native_google_oauth.dart';
 export 'src/vault_provisioner.dart';
+export 'src/shutdown_client.dart';
 
 part 'data.g.dart';
 
@@ -51,7 +52,22 @@ class Locations extends Table {
   IntColumn get colorArgb => integer()();
   IntColumn get sortOrder => integer()();
   BoolColumn get isArchived => boolean().withDefault(const Constant(false))();
+  TextColumn get city => text().withDefault(const Constant(''))();
+  TextColumn get region => text().withDefault(const Constant('krem'))();
+  TextColumn get street => text().withDefault(const Constant(''))();
+  TextColumn get building => text().withDefault(const Constant(''))();
 }
+
+Map<String, Object?> _locationSnapshot(Location row) => {
+      'name': row.name,
+      'colorArgb': row.colorArgb,
+      'sortOrder': row.sortOrder,
+      'isArchived': row.isArchived,
+      'city': row.city,
+      'region': row.region,
+      'street': row.street,
+      'building': row.building,
+    };
 
 class TariffZones extends Table {
   IntColumn get id => integer().autoIncrement()();
@@ -225,7 +241,7 @@ class ElectricityDatabase extends _$ElectricityDatabase {
   // compares version numbers, onUpgrade below detects the actual on-disk
   // shape via sqlite_master/PRAGMA instead of trusting `from` alone.
   @override
-  int get schemaVersion => 12;
+  int get schemaVersion => 14;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -272,6 +288,30 @@ class ElectricityDatabase extends _$ElectricityDatabase {
           });
         },
         onUpgrade: (m, from, to) async {
+          if (from < 14) {
+            final columns = await customSelect("PRAGMA table_info('locations')")
+                .map((row) => row.read<String>('name'))
+                .get();
+            if (columns.isNotEmpty && !columns.contains('region')) {
+              await m.addColumn(locations, locations.region);
+            }
+          }
+          if (from < 13) {
+            final columns = await customSelect("PRAGMA table_info('locations')")
+                .map((row) => row.read<String>('name'))
+                .get();
+            if (columns.isNotEmpty) {
+              for (final column in [
+                locations.city,
+                locations.street,
+                locations.building
+              ]) {
+                if (!columns.contains(column.$name)) {
+                  await m.addColumn(locations, column);
+                }
+              }
+            }
+          }
           // ADR 0006: add a Location entity, plus a many-to-many LocationZones
           // link so a zone (and its tariff rates) can be shared by more than
           // one location instead of being duplicated. Existing zones link to
@@ -589,16 +629,8 @@ class DriftSyncJournal {
         final entities = <(String, String, Map<String, Object?>)>[];
         for (final location
             in await database.select(database.locations).get()) {
-          entities.add((
-            'location',
-            location.syncId!,
-            {
-              'name': location.name,
-              'colorArgb': location.colorArgb,
-              'sortOrder': location.sortOrder,
-              'isArchived': location.isArchived,
-            }
-          ));
+          entities
+              .add(('location', location.syncId!, _locationSnapshot(location)));
         }
         for (final zone in await database.select(database.tariffZones).get()) {
           final links = await (database.select(database.locationZones)
@@ -1650,12 +1682,7 @@ class GoogleDriveIncomingApplier {
                 {
                   'side': 'local',
                   'entityId': syncId,
-                  'payload': {
-                    'name': existing.name,
-                    'colorArgb': existing.colorArgb,
-                    'sortOrder': existing.sortOrder,
-                    'isArchived': existing.isArchived,
-                  }
+                  'payload': _locationSnapshot(existing)
                 },
                 {
                   'side': 'remote',
@@ -1678,12 +1705,7 @@ class GoogleDriveIncomingApplier {
                 {
                   'side': 'local',
                   'entityId': syncId,
-                  'payload': {
-                    'name': existing.name,
-                    'colorArgb': existing.colorArgb,
-                    'sortOrder': existing.sortOrder,
-                    'isArchived': existing.isArchived,
-                  }
+                  'payload': _locationSnapshot(existing)
                 },
                 {
                   'side': 'remote',
@@ -1704,6 +1726,18 @@ class GoogleDriveIncomingApplier {
               ..where((row) => row.id.equals(existing.id)))
             .write(LocationsCompanion(
                 name: Value(_string(payload, 'name')),
+                region: payload.containsKey('region')
+                    ? Value(_regionString(payload))
+                    : const Value.absent(),
+                city: payload.containsKey('city')
+                    ? Value(_addressString(payload, 'city'))
+                    : const Value.absent(),
+                street: payload.containsKey('street')
+                    ? Value(_addressString(payload, 'street'))
+                    : const Value.absent(),
+                building: payload.containsKey('building')
+                    ? Value(_addressString(payload, 'building'))
+                    : const Value.absent(),
                 colorArgb: Value(_integer(payload, 'colorArgb')),
                 sortOrder: Value(_integer(payload, 'sortOrder')),
                 isArchived: Value(_boolean(payload, 'isArchived'))));
@@ -1714,12 +1748,7 @@ class GoogleDriveIncomingApplier {
             {
               'side': 'local',
               'entityId': syncId,
-              'payload': {
-                'name': existing.name,
-                'colorArgb': existing.colorArgb,
-                'sortOrder': existing.sortOrder,
-                'isArchived': existing.isArchived,
-              }
+              'payload': _locationSnapshot(existing)
             },
             {'side': 'remote', 'entityId': syncId, 'payload': payload},
           ]);
@@ -1739,12 +1768,7 @@ class GoogleDriveIncomingApplier {
             {
               'side': 'local',
               'entityId': duplicateName.syncId,
-              'payload': {
-                'name': duplicateName.name,
-                'colorArgb': duplicateName.colorArgb,
-                'sortOrder': duplicateName.sortOrder,
-                'isArchived': duplicateName.isArchived,
-              }
+              'payload': _locationSnapshot(duplicateName)
             },
             {'side': 'remote', 'entityId': syncId, 'payload': payload},
           ]);
@@ -1752,6 +1776,18 @@ class GoogleDriveIncomingApplier {
     await database.into(database.locations).insert(LocationsCompanion.insert(
         syncId: Value(syncId),
         name: name,
+        region: payload.containsKey('region')
+            ? Value(_regionString(payload))
+            : const Value.absent(),
+        city: payload.containsKey('city')
+            ? Value(_addressString(payload, 'city'))
+            : const Value.absent(),
+        street: payload.containsKey('street')
+            ? Value(_addressString(payload, 'street'))
+            : const Value.absent(),
+        building: payload.containsKey('building')
+            ? Value(_addressString(payload, 'building'))
+            : const Value.absent(),
         colorArgb: _integer(payload, 'colorArgb'),
         sortOrder: _integer(payload, 'sortOrder'),
         isArchived: Value(_boolean(payload, 'isArchived'))));
@@ -2263,6 +2299,11 @@ class GoogleDriveIncomingApplier {
 
   bool _locationMatches(Location row, Map<String, dynamic> payload) =>
       row.name == payload['name'] &&
+      (!payload.containsKey('region') || row.region == payload['region']) &&
+      (!payload.containsKey('city') || row.city == payload['city']) &&
+      (!payload.containsKey('street') || row.street == payload['street']) &&
+      (!payload.containsKey('building') ||
+          row.building == payload['building']) &&
       row.colorArgb == payload['colorArgb'] &&
       row.sortOrder == payload['sortOrder'] &&
       row.isArchived == payload['isArchived'];
@@ -2306,6 +2347,20 @@ class GoogleDriveIncomingApplier {
     final value = payload[key];
     if (value is! String || value.isEmpty) {
       throw FormatException('Invalid $key in sync payload');
+    }
+    return value;
+  }
+
+  String _addressString(Map<String, dynamic> payload, String key) {
+    final value = payload[key];
+    if (value is! String) throw FormatException('Invalid $key in sync payload');
+    return value.trim();
+  }
+
+  String _regionString(Map<String, dynamic> payload) {
+    final value = _string(payload, 'region');
+    if (!domain.ShutdownRegion.values.any((region) => region.code == value)) {
+      throw const FormatException('Unsupported shutdown region');
     }
     return value;
   }
@@ -2682,6 +2737,10 @@ class DriftLocationRepository implements domain.LocationRepository {
                 id: _idValue(location.id),
                 syncId: syncId,
                 name: location.name,
+                region: Value(location.region.code),
+                city: Value(location.city.trim()),
+                street: Value(location.street.trim()),
+                building: Value(location.building.trim()),
                 colorArgb: location.colorArgb,
                 sortOrder: location.sortOrder,
                 isArchived: Value(location.isArchived)));
@@ -2693,12 +2752,7 @@ class DriftLocationRepository implements domain.LocationRepository {
             changeId: _newSyncId(),
             entityKind: 'location',
             entityId: saved.syncId!,
-            payload: jsonEncode({
-              'name': saved.name,
-              'colorArgb': saved.colorArgb,
-              'sortOrder': saved.sortOrder,
-              'isArchived': saved.isArchived,
-            }));
+            payload: jsonEncode(_locationSnapshot(saved)));
       });
   @override
   Future<void> delete(int id) => database.transaction(() async {
@@ -2723,6 +2777,11 @@ class DriftLocationRepository implements domain.LocationRepository {
             isDeleted: true);
       });
   domain.Location _toDomain(Location row) => domain.Location(row.id, row.name,
+      region: domain.ShutdownRegion.values
+          .singleWhere((region) => region.code == row.region),
+      city: row.city,
+      street: row.street,
+      building: row.building,
       colorArgb: row.colorArgb,
       sortOrder: row.sortOrder,
       isArchived: row.isArchived);

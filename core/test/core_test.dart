@@ -2,6 +2,23 @@ import 'package:test/test.dart';
 import 'package:ai_electricity_core/core.dart';
 
 void main() {
+  test('location region is explicit and survives unrelated edits', () {
+    const location = Location(1, 'Home');
+    expect(location.region, ShutdownRegion.kyivRegion);
+    expect(location.copyWith(name: 'Other').region, ShutdownRegion.kyivRegion);
+    final city = location.copyWith(
+        region: ShutdownRegion.kyivCity,
+        city: 'Kyiv',
+        street: 'Main',
+        building: '66');
+    expect(city.copyWith().region, ShutdownRegion.kyivCity);
+    expect(city.hasShutdownAddress, isTrue);
+    expect(ShutdownRegion.kyivRegion.code, 'krem');
+    expect(ShutdownRegion.kyivRegion.label, 'Kyiv region');
+    expect(ShutdownRegion.kyivCity.code, 'kem');
+    expect(ShutdownRegion.kyivCity.label, 'Kyiv city');
+  });
+
   group('value objects', () {
     test('reject invalid kWh and preserves fixed precision', () {
       expect(() => Kwh(-1), throwsArgumentError);
@@ -189,6 +206,51 @@ void main() {
     final zone = TariffZone(1, ZoneCode('day'), 'Day', ZoneKind.day);
     expect(zone.locationIds, {1});
     expect(zone.copyWith(locationIds: {1, 2}).locationIds, {1, 2});
+  });
+
+  test('shutdown address is optional, complete, clearable and not unique', () {
+    const empty = Location(1, 'Home');
+    expect(empty.hasShutdownAddress, isFalse);
+    final addressed =
+        empty.copyWith(city: 'Village', street: 'Main', building: '66');
+    expect(addressed.hasShutdownAddress, isTrue);
+    expect(addressed.copyWith().city, 'Village');
+    expect(addressed.copyWith().street, 'Main');
+    expect(addressed.copyWith().building, '66');
+    expect(addressed.copyWith(city: ' ').hasShutdownAddress, isFalse);
+    expect(addressed.copyWith(street: '').hasShutdownAddress, isFalse);
+    expect(addressed.copyWith(building: '').hasShutdownAddress, isFalse);
+    final duplicate = Location(2, 'Other',
+        city: addressed.city,
+        street: addressed.street,
+        building: addressed.building);
+    expect(duplicate.hasShutdownAddress, isTrue);
+    expect(duplicate.id, isNot(addressed.id));
+  });
+
+  test('shutdown records preserve published dates and optional outage notices',
+      () {
+    final schedule = ShutdownSchedule(
+        city: 'Village',
+        street: 'Main',
+        building: '66',
+        groups: const ['GPV4.1'],
+        updatedAt: '22.10.2026 21:44',
+        fetchedAt: DateTime.utc(2026, 10, 23),
+        days: const [
+          ShutdownDay('2026-10-23', [ShutdownInterval(660, 900)])
+        ]);
+    expect(schedule.city, 'Village');
+    expect(schedule.street, 'Main');
+    expect(schedule.building, '66');
+    expect(schedule.groups, ['GPV4.1']);
+    expect(schedule.updatedAt, '22.10.2026 21:44');
+    expect(schedule.fetchedAt, DateTime.utc(2026, 10, 23));
+    expect(schedule.currentOutage, isNull);
+    expect(schedule.days.single.date, '2026-10-23');
+    expect(schedule.days.single.intervals.single.startMinute, 660);
+    expect(schedule.days.single.intervals.single.endMinute, 900);
+    expect(const ShutdownException('Unavailable').message, 'Unavailable');
   });
 
   test('a zone linked to multiple locations is not duplicated', () {

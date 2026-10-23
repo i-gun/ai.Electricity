@@ -13,6 +13,7 @@ dependencies:
     path: ../core
   fl_chart: ^1.2.0
   intl: ^0.20.3
+  timezone: ^0.10.1
 
 dev_dependencies:
   flutter_test:

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -5,7 +7,468 @@ import 'package:ai_electricity_core/core.dart';
 import 'package:ai_electricity_ui/ui.dart';
 import 'package:fl_chart/fl_chart.dart';
 
+class _ShutdownRepository implements ShutdownScheduleRepository {
+  int calls = 0;
+  bool fail = false;
+  List<ShutdownDay>? days;
+  DateTime? fetchedAt;
+  String? currentOutage;
+  final requested = <Location>[];
+  @override
+  Future<ShutdownSchedule?> fetch(Location location) async {
+    calls++;
+    requested.add(location);
+    if (fail) throw const ShutdownException('Collector unavailable.');
+    return ShutdownSchedule(
+        region: location.region,
+        city: location.city,
+        street: location.street,
+        building: location.building,
+        groups: const ['GPV4.1'],
+        updatedAt: '22.10.2026 21:44',
+        fetchedAt: fetchedAt ?? DateTime.utc(2026, 10, 23),
+        currentOutage: currentOutage,
+        days: days ??
+            const [
+              ShutdownDay('2026-10-23', [ShutdownInterval(660, 900)])
+            ]);
+  }
+}
+
+class _TestLocations implements LocationRepository {
+  const _TestLocations(this.locations);
+  final List<Location> locations;
+  @override
+  Stream<List<Location>> watchAll({bool includeArchived = false}) =>
+      Stream.value(locations);
+  @override
+  Future<void> save(Location location) async {}
+  @override
+  Future<void> delete(int id) async {}
+}
+
+class _DelayedShutdownRepository implements ShutdownScheduleRepository {
+  final pending = <int, Completer<ShutdownSchedule?>>{};
+  @override
+  Future<ShutdownSchedule?> fetch(Location location) =>
+      (pending[location.id] = Completer<ShutdownSchedule?>()).future;
+}
+
 void main() {
+  testWidgets('Status bulb updates at time boundaries without network polling',
+      (tester) async {
+    var now = DateTime.utc(2026, 10, 23, 8, 29);
+    final repository = _ShutdownRepository()
+      ..fetchedAt = now
+      ..days = const [
+        ShutdownDay('2026-10-23', [ShutdownInterval(660, 690)])
+      ];
+    final controller = ShutdownStatusController(now: () => now);
+    addTearDown(controller.dispose);
+    controller.configure(
+        const Location(1, 'Home', city: 'Kyiv', street: 'Main', building: '66'),
+        repository);
+    await controller.refresh();
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(body: ShutdownStatusBulb(controller: controller))));
+    expect(find.byKey(const ValueKey('status-bulb-outage')), findsOneWidget);
+    now = now.add(const Duration(minutes: 1));
+    await tester.pump(const Duration(seconds: 30));
+    expect(find.byKey(const ValueKey('status-bulb-available')), findsOneWidget);
+    now = now.add(const Duration(minutes: 5));
+    await tester.pump(const Duration(seconds: 30));
+    expect(find.byKey(const ValueKey('status-bulb-unknown')), findsOneWidget);
+    expect(repository.calls, 1);
+  });
+
+  testWidgets(
+      'Status bulb follows the active location in desktop and compact navigation',
+      (tester) async {
+    for (final compact in [false, true]) {
+      final repository = _ShutdownRepository()
+        ..fetchedAt = DateTime.now()
+        ..currentOutage = 'Emergency outage';
+      await tester.pumpWidget(MaterialApp(
+          home: SharedHome(
+              key: ValueKey(compact),
+              compact: compact,
+              locationRepository: const _TestLocations([
+                Location(1, 'Addressed home',
+                    city: 'Kyiv', street: 'Main', building: '66'),
+                Location(2, 'Empty address'),
+              ]),
+              shutdownRepository: repository)));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('status-bulb-outage')), findsOneWidget);
+      expect(repository.calls, 1);
+      await tester.tap(find.byType(ShutdownStatusBulb));
+      await tester.pumpAndSettle();
+      expect(repository.calls, 1);
+      await tester.tap(find.byType(DropdownButton<int>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Empty address').last);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('status-bulb-unknown')), findsOneWidget);
+      expect(repository.calls, 1);
+    }
+  });
+
+  test('Status bulb follows Kyiv time, interval ends, notices and stale data',
+      () async {
+    var now = DateTime.utc(2026, 10, 23, 8, 29);
+    final repository = _ShutdownRepository()
+      ..fetchedAt = now
+      ..days = const [
+        ShutdownDay('2026-10-23', [ShutdownInterval(660, 690)])
+      ];
+    final controller = ShutdownStatusController(now: () => now);
+    addTearDown(controller.dispose);
+    controller.configure(
+        const Location(1, 'Home',
+            city: 'Village', street: 'Main', building: '66'),
+        repository);
+    await controller.refresh();
+    expect(controller.bulbState, StatusBulbState.outage);
+    now = DateTime.utc(2026, 10, 23, 8, 30);
+    expect(controller.bulbState, StatusBulbState.available);
+    repository.currentOutage = 'Emergency outage';
+    await controller.refresh();
+    expect(controller.bulbState, StatusBulbState.outage);
+    now = now.add(const Duration(minutes: 5));
+    expect(controller.bulbState, StatusBulbState.unknown);
+    repository.currentOutage = null;
+    repository.fetchedAt = now;
+    repository.days = const [ShutdownDay('2026-10-24', [])];
+    await controller.refresh();
+    expect(controller.bulbState, StatusBulbState.unknown);
+    repository.fail = true;
+    await controller.refresh();
+    expect(controller.bulbState, StatusBulbState.unknown);
+  });
+
+  test('Status bulb uses Kyiv winter dates and never fetches empty addresses',
+      () async {
+    final now = DateTime.utc(2026, 1, 1, 22, 30);
+    final repository = _ShutdownRepository()
+      ..fetchedAt = now
+      ..days = const [
+        ShutdownDay('2026-01-02', [ShutdownInterval(30, 60)])
+      ];
+    final controller = ShutdownStatusController(now: () => now);
+    addTearDown(controller.dispose);
+    controller.configure(const Location(1, 'Home'), repository);
+    await controller.refresh();
+    expect(repository.calls, 0);
+    expect(controller.bulbState, StatusBulbState.unknown);
+    controller.configure(
+        const Location(1, 'Home', city: 'Kyiv', street: 'Main', building: '66'),
+        repository);
+    await controller.refresh();
+    expect(controller.bulbState, StatusBulbState.outage);
+  });
+
+  testWidgets('Status bulb icons inherit light and dark button themes',
+      (tester) async {
+    final now = DateTime.utc(2026, 10, 23, 8);
+    final repository = _ShutdownRepository()
+      ..fetchedAt = now
+      ..days = const [ShutdownDay('2026-10-23', [])];
+    final controller = ShutdownStatusController(now: () => now);
+    addTearDown(controller.dispose);
+    controller.configure(
+        const Location(1, 'Home', city: 'Kyiv', street: 'Main', building: '66'),
+        repository);
+    await controller.refresh();
+    for (final theme in [lightTheme(), darkTheme()]) {
+      await tester.pumpWidget(MaterialApp(
+          theme: theme,
+          home: Scaffold(body: ShutdownStatusBulb(controller: controller))));
+      final icon = tester
+          .widget<Icon>(find.byKey(const ValueKey('status-bulb-available')));
+      expect(icon.icon, Icons.lightbulb);
+      expect(
+          icon.color,
+          Theme.of(tester.element(find.byType(ShutdownStatusBulb)))
+              .colorScheme
+              .primary);
+      expect(find.byType(ShutdownStatusBulb), findsOneWidget);
+    }
+    repository.currentOutage = 'Reported outage';
+    await controller.refresh();
+    await tester.pump();
+    expect(
+        tester
+            .widget<Icon>(find.byKey(const ValueKey('status-bulb-outage')))
+            .icon,
+        Icons.lightbulb_outline);
+    controller.configure(null, repository);
+    await tester.pump();
+    expect(find.byKey(const ValueKey('status-bulb-unknown')), findsOneWidget);
+  });
+
+  testWidgets(
+      'Status timeline shows full and half hours and switches published dates',
+      (tester) async {
+    final repository = _ShutdownRepository()
+      ..days = const [
+        ShutdownDay('2026-10-23',
+            [ShutdownInterval(90, 210), ShutdownInterval(1410, 1440)]),
+        ShutdownDay('2026-10-24', []),
+      ];
+    await tester.pumpWidget(MaterialApp(
+        theme: lightTheme(),
+        home: Scaffold(
+            body: ShutdownStatusView(
+                location: const Location(1, 'Home',
+                    city: 'Village', street: 'Main', building: '66'),
+                repository: repository))));
+    await tester.pumpAndSettle();
+    final context = tester.element(find.byType(ShutdownStatusView));
+    final scheme = Theme.of(context).colorScheme;
+    Color color(int hour, int half) => tester
+        .widget<ColoredBox>(find.byKey(ValueKey('shutdown-half-$hour-$half')))
+        .color;
+    expect(color(0, 0), scheme.surfaceContainerLowest);
+    expect(color(1, 0), scheme.surfaceContainerLowest);
+    expect(color(1, 1), scheme.errorContainer);
+    expect(color(2, 0), scheme.errorContainer);
+    expect(color(2, 1), scheme.errorContainer);
+    expect(color(3, 0), scheme.errorContainer);
+    expect(color(3, 1), scheme.surfaceContainerLowest);
+    expect(color(23, 1), scheme.errorContainer);
+    expect(find.text('01:30 - 03:30'), findsOneWidget);
+    expect(find.text('23:30 - 24:00'), findsOneWidget);
+    expect(find.text('First 30 min'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('shutdown-day-2026-10-24')));
+    await tester.pumpAndSettle();
+    expect(find.text('No planned outages published for this date.'),
+        findsOneWidget);
+    expect(find.text('01:30 - 03:30'), findsNothing);
+    expect(color(2, 0), scheme.surfaceContainerLowest);
+    expect(repository.calls, 1);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'Status timeline respects light and dark themes on narrow screens',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 720));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    for (final theme in [lightTheme(), darkTheme()]) {
+      final repository = _ShutdownRepository();
+      await tester.pumpWidget(MaterialApp(
+          theme: theme,
+          home: Scaffold(
+              body: ShutdownStatusView(
+                  key: ValueKey(theme.brightness),
+                  location: const Location(1, 'Home',
+                      city: 'Village', street: 'Main', building: '66'),
+                  repository: repository))));
+      await tester.pumpAndSettle();
+      final scheme =
+          Theme.of(tester.element(find.byType(ShutdownStatusView))).colorScheme;
+      expect(
+          tester
+              .widget<ColoredBox>(
+                  find.byKey(const ValueKey('shutdown-half-11-0')))
+              .color,
+          scheme.errorContainer);
+      expect(
+          tester
+              .widget<ColoredBox>(
+                  find.byKey(const ValueKey('shutdown-half-0-0')))
+              .color,
+          scheme.surfaceContainerLowest);
+      await tester.drag(find.byKey(const ValueKey('shutdown-timeline-scroll')),
+          const Offset(-1000, 0));
+      await tester.pumpAndSettle();
+      final lastHour = tester.getRect(find.text('23-24'));
+      expect(lastHour.right, lessThanOrEqualTo(360));
+      expect(lastHour.left, greaterThanOrEqualTo(0));
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+  testWidgets('Status uses the active location and switches regions',
+      (tester) async {
+    final repository = _ShutdownRepository();
+    await tester.pumpWidget(MaterialApp(
+        home: SharedHome(
+            locationRepository: const _TestLocations([
+              Location(1, 'Region house',
+                  city: 'Village', street: 'Main', building: '66'),
+              Location(2, 'City apartment',
+                  region: ShutdownRegion.kyivCity,
+                  city: 'Kyiv',
+                  street: 'Other',
+                  building: '10'),
+            ]),
+            shutdownRepository: repository)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Status'));
+    await tester.pumpAndSettle();
+    expect(repository.requested.single.id, 1);
+    expect(find.text('Kyiv region'), findsOneWidget);
+    await tester.tap(find.byType(DropdownButton<int>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('City apartment').last);
+    await tester.pumpAndSettle();
+    expect(repository.requested.last.id, 2);
+    expect(repository.requested.last.region, ShutdownRegion.kyivCity);
+    expect(find.text('Kyiv city'), findsOneWidget);
+    expect(find.text('Village, Main, 66'), findsNothing);
+  });
+
+  testWidgets('Status remains unused for an empty address', (tester) async {
+    final repository = _ShutdownRepository();
+    await tester.pumpWidget(
+        MaterialApp(home: SharedHome(shutdownRepository: repository)));
+    await tester.tap(find.text('Status'));
+    await tester.pumpAndSettle();
+    expect(find.text('Address incomplete.'), findsOneWidget);
+    expect(repository.calls, 0);
+  });
+
+  testWidgets('Status ignores late results from a previous location',
+      (tester) async {
+    final repository = _DelayedShutdownRepository();
+    const first =
+        Location(1, 'First', city: 'Old', street: 'Main', building: '1');
+    const second = Location(2, 'Second',
+        region: ShutdownRegion.kyivCity,
+        city: 'Kyiv',
+        street: 'Other',
+        building: '2');
+    ShutdownSchedule result(Location location) => ShutdownSchedule(
+        region: location.region,
+        city: location.city,
+        street: location.street,
+        building: location.building,
+        groups: const ['GPV1.1'],
+        updatedAt: '23.10.2026',
+        fetchedAt: DateTime.utc(2026, 10, 23),
+        days: const [ShutdownDay('2026-10-23', [])]);
+    await tester.pumpWidget(MaterialApp(
+        home: ShutdownStatusView(location: first, repository: repository)));
+    await tester.pumpWidget(MaterialApp(
+        home: ShutdownStatusView(location: second, repository: repository)));
+    repository.pending[2]!.complete(result(second));
+    await tester.pumpAndSettle();
+    expect(find.text('Kyiv, Other, 2'), findsOneWidget);
+    repository.pending[1]!.complete(result(first));
+    await tester.pumpAndSettle();
+    expect(find.text('Kyiv, Other, 2'), findsOneWidget);
+    expect(find.text('Old, Main, 1'), findsNothing);
+  });
+
+  testWidgets('region editor saves Kyiv city with its locality',
+      (tester) async {
+    final repository = _ShutdownRepository();
+    await tester.pumpWidget(
+        MaterialApp(home: SharedHome(shutdownRepository: repository)));
+    await tester.tap(find.text('Locations'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Edit location'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(DropdownButtonFormField<ShutdownRegion>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Kyiv city').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Street (optional)'), 'Main');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Building (optional)'), '66');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Status'));
+    await tester.pumpAndSettle();
+    expect(repository.requested.single.region, ShutdownRegion.kyivCity);
+    expect(
+        repository.requested.single.city, '\u043c. \u041a\u0438\u0457\u0432');
+  });
+
+  testWidgets('shutdown failure can retry on a narrow screen', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 720));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final repository = _ShutdownRepository()..fail = true;
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: LocationsView(
+                locations: const [
+          Location(1, 'Home', city: 'Village', street: 'Main', building: '66')
+        ],
+                zones: const [],
+                shutdownRepository: repository,
+                onToggleLocation: (_) {},
+                onAddLocation: () {},
+                onEditLocation: (_) {},
+                onDeleteLocation: (_) {}))));
+    await tester.tap(find.byTooltip('Shutdown schedule'));
+    await tester.pumpAndSettle();
+    expect(find.text('Collector unavailable.'), findsOneWidget);
+    expect(find.textContaining('No planned outages'), findsNothing);
+    repository.fail = false;
+    await tester.tap(find.byTooltip('Refresh schedule'));
+    await tester.pumpAndSettle();
+    expect(find.text('11:00 - 15:00'), findsOneWidget);
+    expect(repository.calls, 2);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('empty location address never enables shutdown fetch',
+      (tester) async {
+    final repository = _ShutdownRepository();
+    await tester.pumpWidget(
+        MaterialApp(home: SharedHome(shutdownRepository: repository)));
+    await tester.tap(find.text('Locations'));
+    await tester.pumpAndSettle();
+    final button = tester.widget<IconButton>(find.byWidgetPredicate((widget) =>
+        widget is IconButton && widget.tooltip == 'Shutdown schedule'));
+    expect(button.onPressed, isNull);
+    expect(repository.calls, 0);
+  });
+
+  testWidgets('address edit enables fetching and clearing disables it',
+      (tester) async {
+    final repository = _ShutdownRepository();
+    await tester.pumpWidget(
+        MaterialApp(home: SharedHome(shutdownRepository: repository)));
+    await tester.tap(find.text('Locations'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Edit location'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.widgetWithText(TextField, 'City (optional)'), 'Village');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Street (optional)'), 'Main');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Building (optional)'), '66');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    expect(repository.calls, 1);
+    await tester.tap(find.byTooltip('Shutdown schedule'));
+    await tester.pumpAndSettle();
+    expect(repository.calls, 2);
+    expect(find.text('Group: GPV4.1'), findsOneWidget);
+    expect(find.text('11:00 - 15:00'), findsOneWidget);
+    expect(find.text('2026-10-23'), findsOneWidget);
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Edit location'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Building (optional)'), '');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    expect(
+        tester
+            .widget<IconButton>(find.byWidgetPredicate((widget) =>
+                widget is IconButton && widget.tooltip == 'Shutdown schedule'))
+            .onPressed,
+        isNull);
+    expect(repository.calls, 2);
+  });
+
   testWidgets('creates the shared light theme', (tester) async {
     await tester.pumpWidget(
       MaterialApp(

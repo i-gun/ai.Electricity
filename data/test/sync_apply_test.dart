@@ -62,6 +62,74 @@ Map<String, Object?> envelope(
     };
 
 void main() {
+  test('location addresses sync, survive legacy edits, and can be cleared',
+      () async {
+    final database = ElectricityDatabase(NativeDatabase.memory());
+    addTearDown(database.close);
+    final journal = DriftSyncJournal(database);
+    final created =
+        await SyncVault.create('a sufficiently long recovery secret');
+    final store = IncomingStore();
+    final applier = GoogleDriveIncomingApplier(
+        database: database,
+        journal: journal,
+        store: store,
+        vault: created.vault);
+    final payload = <String, Object?>{
+      'name': 'Remote cabin',
+      'colorArgb': 123,
+      'sortOrder': 1,
+      'isArchived': false
+    };
+    await store.add(
+        created.vault,
+        envelope('address-create', 'location', 'remote-address', {
+          ...payload,
+          'region': 'kem',
+          'city': 'Village',
+          'street': 'Main',
+          'building': '66'
+        }));
+    expect((await applier.applyAvailable()).conflicts, 0);
+    var cabin = (await database.select(database.locations).get())
+        .singleWhere((row) => row.syncId == 'remote-address');
+    expect(cabin.region, 'kem');
+    expect(
+        [cabin.city, cabin.street, cabin.building], ['Village', 'Main', '66']);
+    await store.add(
+        created.vault,
+        envelope('address-legacy', 'location', 'remote-address',
+            {...payload, 'name': 'Legacy rename'},
+            parentChangeId: 'address-create'));
+    expect((await applier.applyAvailable()).conflicts, 0);
+    cabin = (await database.select(database.locations).get())
+        .singleWhere((row) => row.syncId == 'remote-address');
+    expect(cabin.name, 'Legacy rename');
+    expect(cabin.region, 'kem');
+    expect(
+        [cabin.city, cabin.street, cabin.building], ['Village', 'Main', '66']);
+    await store.add(
+        created.vault,
+        envelope(
+            'address-clear',
+            'location',
+            'remote-address',
+            {
+              ...payload,
+              'name': 'Legacy rename',
+              'region': 'krem',
+              'city': '',
+              'street': '',
+              'building': ''
+            },
+            parentChangeId: 'address-legacy'));
+    expect((await applier.applyAvailable()).conflicts, 0);
+    cabin = (await database.select(database.locations).get())
+        .singleWhere((row) => row.syncId == 'remote-address');
+    expect([cabin.city, cabin.street, cabin.building], ['', '', '']);
+    expect(cabin.region, 'krem');
+  });
+
   test('applies safe records in dependency order without outgoing echoes',
       () async {
     final database = ElectricityDatabase(NativeDatabase.memory());
