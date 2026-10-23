@@ -6,7 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import 'src/shutdown_status.dart';
+import 'src/shutdown_indicator.dart';
 export 'src/shutdown_status.dart';
+export 'src/shutdown_indicator.dart';
 
 class SyncConflictItem {
   const SyncConflictItem({
@@ -457,6 +459,7 @@ class _SharedHomeState extends State<SharedHome> {
   String rangeKey = '1W';
   String currencyCode = 'EUR';
   int currentLocationId = 1;
+  final _shutdownStatus = ShutdownStatusController();
 
   List<TariffZone> get activeZones => zonesAt(currentLocationId);
 
@@ -509,6 +512,12 @@ class _SharedHomeState extends State<SharedHome> {
   }
 
   @override
+  void dispose() {
+    _shutdownStatus.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     // A zone can be linked to more than one location, so the Readings tab and
     // the Stats tab's "Per zone" mode are scoped to whichever location is
@@ -525,6 +534,7 @@ class _SharedHomeState extends State<SharedHome> {
             .where((location) => location.id == currentLocationId)
             .firstOrNull ??
         activeLocations.firstOrNull;
+    _shutdownStatus.configure(activeLocation, widget.shutdownRepository);
     final pages = [
       ReadingsView(
           readings: locationReadings,
@@ -569,7 +579,9 @@ class _SharedHomeState extends State<SharedHome> {
                 rangeKey = key;
               })),
       ShutdownStatusView(
-          location: activeLocation, repository: widget.shutdownRepository),
+          location: activeLocation,
+          repository: widget.shutdownRepository,
+          controller: _shutdownStatus),
       SyncSettingsView(
           isConnected: widget.isGoogleConnected,
           hasUnlockedVault: widget.hasGoogleVault,
@@ -614,23 +626,23 @@ class _SharedHomeState extends State<SharedHome> {
                     selectedIndex: tab,
                     onDestinationSelected: (v) => setState(() => tab = v),
                     labelType: NavigationRailLabelType.all,
-                    destinations: const [
-                      NavigationRailDestination(
+                    destinations: [
+                      const NavigationRailDestination(
                           icon: Icon(Icons.speed_outlined),
                           label: Text('Readings')),
-                      NavigationRailDestination(
+                      const NavigationRailDestination(
                           icon: Icon(Icons.home_outlined),
                           label: Text('Locations')),
-                      NavigationRailDestination(
+                      const NavigationRailDestination(
                           icon: Icon(Icons.tune),
                           label: Text('Zones & tariffs')),
-                      NavigationRailDestination(
+                      const NavigationRailDestination(
                           icon: Icon(Icons.insights_outlined),
                           label: Text('Stats')),
                       NavigationRailDestination(
-                          icon: Icon(Icons.electric_bolt_outlined),
-                          label: Text('Status')),
-                      NavigationRailDestination(
+                          icon: ShutdownStatusBulb(controller: _shutdownStatus),
+                          label: const Text('Status')),
+                      const NavigationRailDestination(
                           icon: Icon(Icons.sync_outlined), label: Text('Sync'))
                     ]),
                 const VerticalDivider(width: 1),
@@ -642,19 +654,19 @@ class _SharedHomeState extends State<SharedHome> {
                 labelBehavior:
                     NavigationDestinationLabelBehavior.onlyShowSelected,
                 onDestinationSelected: (v) => setState(() => tab = v),
-                destinations: const [
-                    NavigationDestination(
+                destinations: [
+                    const NavigationDestination(
                         icon: Icon(Icons.speed_outlined), label: 'Readings'),
-                    NavigationDestination(
+                    const NavigationDestination(
                         icon: Icon(Icons.home_outlined), label: 'Locations'),
-                    NavigationDestination(
+                    const NavigationDestination(
                         icon: Icon(Icons.tune), label: 'Zones'),
-                    NavigationDestination(
+                    const NavigationDestination(
                         icon: Icon(Icons.insights_outlined), label: 'Stats'),
                     NavigationDestination(
-                        icon: Icon(Icons.electric_bolt_outlined),
+                        icon: ShutdownStatusBulb(controller: _shutdownStatus),
                         label: 'Status'),
-                    NavigationDestination(
+                    const NavigationDestination(
                         icon: Icon(Icons.sync_outlined), label: 'Sync')
                   ])
             : null,

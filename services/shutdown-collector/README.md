@@ -22,9 +22,18 @@ next to Stats and Sync; it follows the active location selected in the app bar.
 The location's schedule icon remains available as a shortcut.
 Each location owns its address independently; duplicate addresses are allowed.
 Empty, partial and archived location addresses never issue a schedule request.
-Status loads once when opened or when the selected address changes; refresh is
-explicit, with no periodic polling. Selecting Kyiv city fills the city field
+The active address loads once for the navigation bulb; opening Status shares
+that result, and changing the active address starts a new lookup. Refresh is
+explicit, with no periodic collector polling. Selecting Kyiv city fills the city field
 with `м. Київ`. Empty street/building fields still prevent any lookup.
+
+The Status button uses the app theme's filled bulb when no outage is scheduled
+for the current Kyiv time, and an outlined bulb during a scheduled or reported
+outage. This is not a live power sensor. Its tooltip distinguishes the source;
+missing, failed, future-dated, older-than-five-minute, or missing-date data uses
+a neutral bulb with a question marker. The indicator checks its clock every
+30 seconds without making network requests, including across half-hour
+boundaries and Kyiv daylight-saving changes. Use Status refresh for fresh data.
 
 ## Region Routing
 

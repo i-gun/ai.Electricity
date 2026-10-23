@@ -11,6 +11,8 @@ class _ShutdownRepository implements ShutdownScheduleRepository {
   int calls = 0;
   bool fail = false;
   List<ShutdownDay>? days;
+  DateTime? fetchedAt;
+  String? currentOutage;
   final requested = <Location>[];
   @override
   Future<ShutdownSchedule?> fetch(Location location) async {
@@ -24,7 +26,8 @@ class _ShutdownRepository implements ShutdownScheduleRepository {
         building: location.building,
         groups: const ['GPV4.1'],
         updatedAt: '22.10.2026 21:44',
-        fetchedAt: DateTime.utc(2026, 10, 23),
+        fetchedAt: fetchedAt ?? DateTime.utc(2026, 10, 23),
+        currentOutage: currentOutage,
         days: days ??
             const [
               ShutdownDay('2026-10-23', [ShutdownInterval(660, 900)])
@@ -52,6 +55,157 @@ class _DelayedShutdownRepository implements ShutdownScheduleRepository {
 }
 
 void main() {
+  testWidgets('Status bulb updates at time boundaries without network polling',
+      (tester) async {
+    var now = DateTime.utc(2026, 10, 23, 8, 29);
+    final repository = _ShutdownRepository()
+      ..fetchedAt = now
+      ..days = const [
+        ShutdownDay('2026-10-23', [ShutdownInterval(660, 690)])
+      ];
+    final controller = ShutdownStatusController(now: () => now);
+    addTearDown(controller.dispose);
+    controller.configure(
+        const Location(1, 'Home', city: 'Kyiv', street: 'Main', building: '66'),
+        repository);
+    await controller.refresh();
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(body: ShutdownStatusBulb(controller: controller))));
+    expect(find.byKey(const ValueKey('status-bulb-outage')), findsOneWidget);
+    now = now.add(const Duration(minutes: 1));
+    await tester.pump(const Duration(seconds: 30));
+    expect(find.byKey(const ValueKey('status-bulb-available')), findsOneWidget);
+    now = now.add(const Duration(minutes: 5));
+    await tester.pump(const Duration(seconds: 30));
+    expect(find.byKey(const ValueKey('status-bulb-unknown')), findsOneWidget);
+    expect(repository.calls, 1);
+  });
+
+  testWidgets(
+      'Status bulb follows the active location in desktop and compact navigation',
+      (tester) async {
+    for (final compact in [false, true]) {
+      final repository = _ShutdownRepository()
+        ..fetchedAt = DateTime.now()
+        ..currentOutage = 'Emergency outage';
+      await tester.pumpWidget(MaterialApp(
+          home: SharedHome(
+              key: ValueKey(compact),
+              compact: compact,
+              locationRepository: const _TestLocations([
+                Location(1, 'Addressed home',
+                    city: 'Kyiv', street: 'Main', building: '66'),
+                Location(2, 'Empty address'),
+              ]),
+              shutdownRepository: repository)));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('status-bulb-outage')), findsOneWidget);
+      expect(repository.calls, 1);
+      await tester.tap(find.byType(ShutdownStatusBulb));
+      await tester.pumpAndSettle();
+      expect(repository.calls, 1);
+      await tester.tap(find.byType(DropdownButton<int>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Empty address').last);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('status-bulb-unknown')), findsOneWidget);
+      expect(repository.calls, 1);
+    }
+  });
+
+  test('Status bulb follows Kyiv time, interval ends, notices and stale data',
+      () async {
+    var now = DateTime.utc(2026, 10, 23, 8, 29);
+    final repository = _ShutdownRepository()
+      ..fetchedAt = now
+      ..days = const [
+        ShutdownDay('2026-10-23', [ShutdownInterval(660, 690)])
+      ];
+    final controller = ShutdownStatusController(now: () => now);
+    addTearDown(controller.dispose);
+    controller.configure(
+        const Location(1, 'Home',
+            city: 'Village', street: 'Main', building: '66'),
+        repository);
+    await controller.refresh();
+    expect(controller.bulbState, StatusBulbState.outage);
+    now = DateTime.utc(2026, 10, 23, 8, 30);
+    expect(controller.bulbState, StatusBulbState.available);
+    repository.currentOutage = 'Emergency outage';
+    await controller.refresh();
+    expect(controller.bulbState, StatusBulbState.outage);
+    now = now.add(const Duration(minutes: 5));
+    expect(controller.bulbState, StatusBulbState.unknown);
+    repository.currentOutage = null;
+    repository.fetchedAt = now;
+    repository.days = const [ShutdownDay('2026-10-24', [])];
+    await controller.refresh();
+    expect(controller.bulbState, StatusBulbState.unknown);
+    repository.fail = true;
+    await controller.refresh();
+    expect(controller.bulbState, StatusBulbState.unknown);
+  });
+
+  test('Status bulb uses Kyiv winter dates and never fetches empty addresses',
+      () async {
+    final now = DateTime.utc(2026, 1, 1, 22, 30);
+    final repository = _ShutdownRepository()
+      ..fetchedAt = now
+      ..days = const [
+        ShutdownDay('2026-01-02', [ShutdownInterval(30, 60)])
+      ];
+    final controller = ShutdownStatusController(now: () => now);
+    addTearDown(controller.dispose);
+    controller.configure(const Location(1, 'Home'), repository);
+    await controller.refresh();
+    expect(repository.calls, 0);
+    expect(controller.bulbState, StatusBulbState.unknown);
+    controller.configure(
+        const Location(1, 'Home', city: 'Kyiv', street: 'Main', building: '66'),
+        repository);
+    await controller.refresh();
+    expect(controller.bulbState, StatusBulbState.outage);
+  });
+
+  testWidgets('Status bulb icons inherit light and dark button themes',
+      (tester) async {
+    final now = DateTime.utc(2026, 10, 23, 8);
+    final repository = _ShutdownRepository()
+      ..fetchedAt = now
+      ..days = const [ShutdownDay('2026-10-23', [])];
+    final controller = ShutdownStatusController(now: () => now);
+    addTearDown(controller.dispose);
+    controller.configure(
+        const Location(1, 'Home', city: 'Kyiv', street: 'Main', building: '66'),
+        repository);
+    await controller.refresh();
+    for (final theme in [lightTheme(), darkTheme()]) {
+      await tester.pumpWidget(MaterialApp(
+          theme: theme,
+          home: Scaffold(body: ShutdownStatusBulb(controller: controller))));
+      final icon = tester
+          .widget<Icon>(find.byKey(const ValueKey('status-bulb-available')));
+      expect(icon.icon, Icons.lightbulb);
+      expect(
+          icon.color,
+          Theme.of(tester.element(find.byType(ShutdownStatusBulb)))
+              .colorScheme
+              .primary);
+      expect(find.byType(ShutdownStatusBulb), findsOneWidget);
+    }
+    repository.currentOutage = 'Reported outage';
+    await controller.refresh();
+    await tester.pump();
+    expect(
+        tester
+            .widget<Icon>(find.byKey(const ValueKey('status-bulb-outage')))
+            .icon,
+        Icons.lightbulb_outline);
+    controller.configure(null, repository);
+    await tester.pump();
+    expect(find.byKey(const ValueKey('status-bulb-unknown')), findsOneWidget);
+  });
+
   testWidgets(
       'Status timeline shows full and half hours and switches published dates',
       (tester) async {
@@ -291,10 +445,10 @@ void main() {
         find.widgetWithText(TextField, 'Building (optional)'), '66');
     await tester.tap(find.widgetWithText(FilledButton, 'Save'));
     await tester.pumpAndSettle();
-    expect(repository.calls, 0);
+    expect(repository.calls, 1);
     await tester.tap(find.byTooltip('Shutdown schedule'));
     await tester.pumpAndSettle();
-    expect(repository.calls, 1);
+    expect(repository.calls, 2);
     expect(find.text('Group: GPV4.1'), findsOneWidget);
     expect(find.text('11:00 - 15:00'), findsOneWidget);
     expect(find.text('2026-10-23'), findsOneWidget);
@@ -312,7 +466,7 @@ void main() {
                 widget is IconButton && widget.tooltip == 'Shutdown schedule'))
             .onPressed,
         isNull);
-    expect(repository.calls, 1);
+    expect(repository.calls, 2);
   });
 
   testWidgets('creates the shared light theme', (tester) async {

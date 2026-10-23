@@ -2,40 +2,47 @@ import 'package:ai_electricity_core/core.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import 'shutdown_indicator.dart';
+
 class ShutdownStatusView extends StatefulWidget {
-  const ShutdownStatusView({super.key, this.location, this.repository});
+  const ShutdownStatusView(
+      {super.key, this.location, this.repository, this.controller});
   final Location? location;
   final ShutdownScheduleRepository? repository;
+  final ShutdownStatusController? controller;
 
   @override
   State<ShutdownStatusView> createState() => _ShutdownStatusViewState();
 }
 
 class _ShutdownStatusViewState extends State<ShutdownStatusView> {
-  bool loading = false;
-  ShutdownSchedule? schedule;
-  String? error;
-  int requestVersion = 0;
+  late ShutdownStatusController _controller;
+  bool get loading => _controller.loading;
+  ShutdownSchedule? get schedule => _controller.schedule;
+  String? get error => _controller.error;
   String? selectedDate;
   final timelineScroll = ScrollController();
-
-  Object _addressKey(Location? location) => (
-        location?.id,
-        location?.region,
-        location?.city,
-        location?.street,
-        location?.building,
-        location?.isArchived
-      );
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _attachController();
+  }
+
+  void _attachController() {
+    _controller = widget.controller ?? ShutdownStatusController();
+    _controller.configure(widget.location, widget.repository);
+    _controller.addListener(_changed);
+  }
+
+  void _changed() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    _controller.removeListener(_changed);
+    if (widget.controller == null) _controller.dispose();
     timelineScroll.dispose();
     super.dispose();
   }
@@ -43,44 +50,16 @@ class _ShutdownStatusViewState extends State<ShutdownStatusView> {
   @override
   void didUpdateWidget(covariant ShutdownStatusView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (_addressKey(oldWidget.location) != _addressKey(widget.location) ||
-        oldWidget.repository != widget.repository) {
-      _load();
+    if (oldWidget.controller != widget.controller) {
+      _controller.removeListener(_changed);
+      if (oldWidget.controller == null) _controller.dispose();
+      _attachController();
+    } else {
+      _controller.configure(widget.location, widget.repository);
     }
   }
 
-  Future<void> _load() async {
-    final version = ++requestVersion;
-    final location = widget.location;
-    final repository = widget.repository;
-    final enabled = location != null &&
-        !location.isArchived &&
-        location.hasShutdownAddress &&
-        repository != null;
-    setState(() {
-      loading = enabled;
-      schedule = null;
-      error = null;
-    });
-    if (!enabled) return;
-    try {
-      final result = await repository.fetch(location);
-      if (mounted && version == requestVersion) {
-        setState(() {
-          schedule = result;
-          if (result == null) error = 'Shutdown schedule unavailable.';
-        });
-      }
-    } catch (failure) {
-      if (mounted && version == requestVersion) {
-        setState(() => error = failure is ShutdownException
-            ? failure.message
-            : 'Shutdown schedule unavailable. Try again.');
-      }
-    } finally {
-      if (mounted && version == requestVersion) setState(() => loading = false);
-    }
-  }
+  Future<void> _load() => _controller.refresh();
 
   String _time(int minutes) =>
       '${(minutes ~/ 60).toString().padLeft(2, '0')}:${(minutes % 60).toString().padLeft(2, '0')}';
